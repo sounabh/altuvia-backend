@@ -1,5 +1,5 @@
 // routes/programRoutes.js
-import { Router } from 'express';
+/*import { Router } from 'express';
 const router = Router();
 import programController from '../controllers/ProgramController.js';
 
@@ -59,4 +59,4 @@ router.get('/:id/links', getExternalLinks);        // Get links
 router.put('/links/:linkId', updateExternalLink);  // Update link
 router.delete('/links/:linkId', deleteExternalLink);
 
-export default router;
+export default router;*/
