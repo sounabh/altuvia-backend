@@ -48,13 +48,13 @@ testPrismaConnection();
 // ============= ROUTES =============
 
 // Admin auth routes (2FA, JWT, etc.)
-app.use('/api/auth', adminAuthRoutes);
+//app.use('/api/auth', adminAuthRoutes);
 
 // User-specific routes (like complete profile)
 app.use('/api/user', userRoutes);
 
 // Program management routes
-app.use('/api/programs', programRoutes);
+//app.use('/api/programs', programRoutes);
 
 // Health check route
 app.get('/api/health', (req, res) => {
