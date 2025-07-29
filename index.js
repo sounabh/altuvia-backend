@@ -20,7 +20,7 @@ app.set('trust proxy', 1);
 
 // CORS configuration
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:3001', 'https://altuvia.vercel.app/'],
+  origin: ['http://localhost:3000', 'http://localhost:3001', 'https://altuvia.vercel.app'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
