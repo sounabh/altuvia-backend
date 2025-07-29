@@ -4,9 +4,9 @@ import cookieParser from 'cookie-parser'; //cookies parsing
 import cors from 'cors';//cross origin resource sharing
 import 'dotenv/config'; //load environment variables from .env file     
 import { PrismaClient } from '@prisma/client'; // Prisma Client for database operations
-import adminAuthRoutes from "./routes/adminRoutes.js"; // Importing admin authentication routes
+//import adminAuthRoutes from "./routes/adminRoutes.js"; // Importing admin authentication routes
 import userRoutes from "./routes/userRoutes.js";  // Importing user-specific routes
-import programRoutes from "./routes/ProgramRoutes.js"; // Importing program management routes
+//import programRoutes from "./routes/ProgramRoutes.js"; // Importing program management routes
 
 // Create Prisma Client
 const prisma = new PrismaClient();
