@@ -2,53 +2,72 @@
 // FIXED USER CONTROLLER (userController.js)
 // ===================================
 
+// Import required modules
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
+// Initialize Prisma client for database operations
 const prisma = new PrismaClient();
 
-// Generate JWT token
+/**
+ * Generates a JWT token for user authentication
+ * @param {string} id - User ID to include in the token payload
+ * @returns {string} JWT token
+ */
 const generateToken = (id) => {
   return jwt.sign(
-    { id },
-    process.env.JWT_SECRET || 'altuvia782729',
-    { expiresIn: '10m' } // Extended to 30 days for better UX
+    { id },  // Payload containing user ID
+    process.env.JWT_SECRET || 'altuvia782729',  // Secret key from environment or fallback
+    { expiresIn: '30d' }  // Token expiration time (originally set to 30 days)
   );
 };
 
-// Set secure cookie
+/**
+ * Sets authentication cookie in the response
+ * @param {object} res - Express response object
+ * @param {string} token - JWT token to set in cookie
+ */
 const setAuthCookie = (res, token) => {
   res.cookie('auth_token', token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    httpOnly: true,  // Prevent client-side JavaScript access
+    secure: process.env.NODE_ENV === 'production',  // Only send over HTTPS in production
+    sameSite: 'strict',  // Prevent CSRF attacks
+    maxAge: 30 * 24 * 60 * 60 * 1000,  // Cookie expiration (30 days)
   });
 };
 
 // ===================================
-// SIMPLIFIED COMPLETE PROFILE - No user creation here
+// PROFILE COMPLETION CONTROLLER
 // ===================================
+/**
+ * Completes user profile by adding preferences, academic info, and payment details
+ * - Handles both new profile creation and updates
+ * - Creates related subscription and payment records
+ * - Returns updated user data with new JWT token
+ */
 export const completeUserProfile = async (req, res) => {
   try {
+    // Log full request data for debugging
     console.log('📝 Full request body:', JSON.stringify(req.body, null, 2));
     console.log('📝 Request body keys:', Object.keys(req.body));
     
-    // More defensive destructuring with logging
+    // Extract and log request data
     const requestData = req.body;
     console.log('📝 Request data type:', typeof requestData);
     console.log('📝 Request data:', requestData);
     
-    // Try different ways to access the data
+    // Initialize data containers
     let preferences, academicInfo, paymentInfo;
     
+    // Handle different request structures
     if (requestData.preferences) {
+      // Structured data format (nested objects)
       preferences = requestData.preferences;
       academicInfo = requestData.academicInfo;
       paymentInfo = requestData.paymentInfo;
     } else {
-      // Maybe the data is directly in req.body
+      // Flat data format (direct properties)
       preferences = {
         countries: requestData.countries,
         courses: requestData.courses,
@@ -73,11 +92,12 @@ export const completeUserProfile = async (req, res) => {
       };
     }
     
+    // Log extracted data
     console.log('📝 Extracted preferences:', preferences);
     console.log('📝 Extracted academicInfo:', academicInfo);
     console.log('📝 Extracted paymentInfo:', paymentInfo);
     
-    // Validate that we have preferences
+    // Validate required preferences data
     if (!preferences) {
       console.error('❌ Preferences is undefined or null');
       return res.status(400).json({
@@ -90,7 +110,7 @@ export const completeUserProfile = async (req, res) => {
       });
     }
     
-    // Get userId from middleware (token)
+    // Get user ID from authentication middleware
     const id = req.userId;
     
     if (!id) {
@@ -100,7 +120,7 @@ export const completeUserProfile = async (req, res) => {
       });
     }
 
-    // Find the existing user
+    // Retrieve existing user with related data
     const existingUser = await prisma.user.findUnique({
       where: { id: id },
       include: {
@@ -109,6 +129,7 @@ export const completeUserProfile = async (req, res) => {
       },
     });
 
+    // Handle missing user
     if (!existingUser) {
       return res.status(404).json({
         success: false,
@@ -116,7 +137,7 @@ export const completeUserProfile = async (req, res) => {
       });
     }
 
-    // Check if profile already completed
+    // Check if profile is already completed
     if (existingUser.profile && existingUser.subscription) {
       console.log('⚠️ User profile already completed:', existingUser.email);
       return res.status(409).json({
@@ -133,8 +154,9 @@ export const completeUserProfile = async (req, res) => {
       });
     }
 
+    // Execute database operations in transaction
     const result = await prisma.$transaction(async (prisma) => {
-      // Create/Update user profile with safer data access
+      // Prepare profile data with fallbacks
       const profileData = {
         countries: Array.isArray(preferences?.countries) ? preferences.countries : [],
         courses: Array.isArray(preferences?.courses) ? preferences.courses : [],
@@ -146,6 +168,7 @@ export const completeUserProfile = async (req, res) => {
 
       console.log('📝 Profile data to save:', profileData);
 
+      // Create or update user profile
       const userProfile = await prisma.userProfile.upsert({
         where: { userId: existingUser.id },
         update: {
@@ -158,9 +181,9 @@ export const completeUserProfile = async (req, res) => {
         },
       });
 
-      // Create/Update subscription
+      // Prepare subscription data with defaults
       const now = new Date();
-      const trialEndDate = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days
+      const trialEndDate = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7-day trial
 
       const subscriptionData = {
         plan: paymentInfo?.subscriptionPlan || 'pro',
@@ -171,12 +194,13 @@ export const completeUserProfile = async (req, res) => {
         currentPeriodStart: paymentInfo?.paymentStatus === 'completed' ? now : null,
         currentPeriodEnd:
           paymentInfo?.paymentStatus === 'completed'
-            ? new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+            ? new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)  // 30-day period
             : null,
         stripeCustomerId: paymentInfo?.customerId || null,
         stripeSubscriptionId: paymentInfo?.subscriptionId || null,
       };
 
+      // Create or update subscription
       const subscription = await prisma.subscription.upsert({
         where: { userId: existingUser.id },
         update: {
@@ -189,7 +213,7 @@ export const completeUserProfile = async (req, res) => {
         },
       });
 
-      // Create payment event if needed
+      // Create payment event if payment status exists
       if (paymentInfo?.paymentStatus) {
         await prisma.paymentEvent.create({
           data: {
@@ -213,10 +237,11 @@ export const completeUserProfile = async (req, res) => {
       };
     });
 
-    // Generate fresh token
+    // Generate new authentication token
     const token = generateToken(result.user.id);
     setAuthCookie(res, token);
 
+    // Return success response with complete user data
     res.status(200).json({
       success: true,
       message: 'Profile completed successfully',
@@ -241,6 +266,7 @@ export const completeUserProfile = async (req, res) => {
       },
     });
   } catch (error) {
+    // Handle specific Prisma errors
     console.error('❌ Error completing user profile:', error);
 
     if (error.code === 'P2002') {
@@ -257,6 +283,7 @@ export const completeUserProfile = async (req, res) => {
       });
     }
 
+    // Generic error response
     res.status(500).json({
       success: false,
       error: 'Internal server error while completing profile',
@@ -264,11 +291,20 @@ export const completeUserProfile = async (req, res) => {
     });
   }
 };
-// Fetch user details - unchanged
+
+// ===================================
+// USER DETAILS FETCH CONTROLLER
+// ===================================
+/**
+ * Fetches complete user details including profile and subscription
+ * - Requires authenticated user
+ * - Returns user data with profile completion status
+ */
 export const fetchUserDetails = async (req, res) => {
   try {
     const userId = req.userId;
 
+    // Retrieve user with related data
     const user = await prisma.user.findUnique({
       where: { id: userId },
       include: {
@@ -277,6 +313,7 @@ export const fetchUserDetails = async (req, res) => {
       }
     });
 
+    // Handle user not found
     if (!user) {
       return res.status(404).json({ 
         success: false, 
@@ -284,6 +321,7 @@ export const fetchUserDetails = async (req, res) => {
       });
     }
 
+    // Return user data
     return res.status(200).json({
       success: true,
       message: 'User data fetched successfully',
@@ -311,14 +349,19 @@ export const fetchUserDetails = async (req, res) => {
 };
 
 // ===================================
-// SIMPLIFIED AUTH CONTROLLER
+// AUTHENTICATION CONTROLLERS
 // ===================================
 
-// Manual Sign In - unchanged
+/**
+ * Handles manual email/password authentication
+ * - Validates credentials
+ * - Returns user data with authentication token
+ */
 export const signIn = async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    // Validate required fields
     if (!email || !password) {
       return res.status(400).json({
         success: false,
@@ -326,6 +369,7 @@ export const signIn = async (req, res) => {
       });
     }
 
+    // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       return res.status(400).json({
@@ -334,6 +378,7 @@ export const signIn = async (req, res) => {
       });
     }
 
+    // Find user by email
     const user = await prisma.user.findUnique({
       where: { email },
       include: {
@@ -342,6 +387,7 @@ export const signIn = async (req, res) => {
       }
     });
 
+    // Handle user not found
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -349,6 +395,7 @@ export const signIn = async (req, res) => {
       });
     }
 
+    // Check OAuth account conflicts
     if (user.provider && !user.password) {
       return res.status(400).json({
         success: false,
@@ -356,6 +403,7 @@ export const signIn = async (req, res) => {
       });
     }
 
+    // Handle missing password
     if (!user.password) {
       return res.status(401).json({
         success: false,
@@ -363,6 +411,7 @@ export const signIn = async (req, res) => {
       });
     }
 
+    // Validate password
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
       return res.status(401).json({
@@ -371,16 +420,20 @@ export const signIn = async (req, res) => {
       });
     }
 
+    // Generate authentication token
     const token = generateToken(user.id);
     setAuthCookie(res, token);
 
+    // Update user last activity
     await prisma.user.update({
       where: { id: user.id },
       data: { updatedAt: new Date() }
     });
 
+    // Determine profile completion status
     const hasCompleteProfile = !!(user.profile && user.subscription);
 
+    // Return success response
     res.status(200).json({
       success: true,
       message: 'Sign in successful',
@@ -407,11 +460,19 @@ export const signIn = async (req, res) => {
   }
 };
 
-// SIMPLIFIED Sign Up - Just creates user, no profile completion
+// ===================================
+// REGISTRATION CONTROLLER
+// ===================================
+/**
+ * Handles new user registration
+ * - Creates basic user account
+ * - Returns authentication token
+ */
 export const signUp = async (req, res) => {
   try {
     const { email, password, name } = req.body;
 
+    // Validate required fields
     if (!email || !password) {
       return res.status(400).json({
         success: false,
@@ -419,6 +480,7 @@ export const signUp = async (req, res) => {
       });
     }
 
+    // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       return res.status(400).json({
@@ -427,6 +489,7 @@ export const signUp = async (req, res) => {
       });
     }
 
+    // Validate password strength
     if (password.length < 6) {
       return res.status(400).json({
         success: false,
@@ -434,10 +497,12 @@ export const signUp = async (req, res) => {
       });
     }
 
+    // Check for existing user
     const existingUser = await prisma.user.findUnique({
       where: { email }
     });
 
+    // Handle duplicate user
     if (existingUser) {
       return res.status(409).json({
         success: false,
@@ -445,22 +510,26 @@ export const signUp = async (req, res) => {
       });
     }
 
+    // Hash password
     const saltRounds = 12;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
+    // Create new user
     const user = await prisma.user.create({
       data: {
         email,
         password: hashedPassword,
-        name: name || email.split('@')[0],
+        name: name || email.split('@')[0],  // Default to email prefix if no name provided
         provider: null,
         emailVerified: false
       }
     });
 
+    // Generate authentication token
     const token = generateToken(user.id);
     setAuthCookie(res, token);
 
+    // Return success response
     res.status(201).json({
       success: true,
       message: 'Account created successfully',
@@ -480,6 +549,7 @@ export const signUp = async (req, res) => {
   } catch (error) {
     console.error('❌ Sign up error:', error);
     
+    // Handle unique constraint violation
     if (error.code === 'P2002') {
       return res.status(409).json({
         success: false,
@@ -487,6 +557,7 @@ export const signUp = async (req, res) => {
       });
     }
 
+    // Generic error response
     res.status(500).json({
       success: false,
       error: 'Internal server error during sign up'
@@ -494,11 +565,19 @@ export const signUp = async (req, res) => {
   }
 };
 
-// OAuth Sign In - simplified, just creates user if needed
+// ===================================
+// OAUTH AUTHENTICATION CONTROLLER
+// ===================================
+/**
+ * Handles OAuth authentication (Google, Facebook, etc.)
+ * - Creates or updates user from provider data
+ * - Returns authentication token
+ */
 export const oauthSignIn = async (req, res) => {
   try {
-    const { email, name, provider, oauthId } = req.body;
+    const { email, name, provider } = req.body;
 
+    // Validate required fields
     if (!email || !provider) {
       return res.status(400).json({
         success: false,
@@ -506,6 +585,7 @@ export const oauthSignIn = async (req, res) => {
       });
     }
 
+    // Find existing user
     let user = await prisma.user.findUnique({
       where: { email },
       include: {
@@ -514,8 +594,9 @@ export const oauthSignIn = async (req, res) => {
       }
     });
 
+    // Update existing user or create new
     if (user) {
-      // Update existing user with OAuth info if needed
+      // Add OAuth provider to existing account if missing
       if (!user.provider) {
         user = await prisma.user.update({
           where: { id: user.id },
@@ -536,7 +617,7 @@ export const oauthSignIn = async (req, res) => {
       user = await prisma.user.create({
         data: {
           email,
-          name: name || email.split('@')[0],
+          name: name || email.split('@')[0],  // Default to email prefix
           provider,
           emailVerified: true
         },
@@ -547,11 +628,14 @@ export const oauthSignIn = async (req, res) => {
       });
     }
 
+    // Generate authentication token
     const token = generateToken(user.id);
     setAuthCookie(res, token);
 
+    // Determine profile completion status
     const hasCompleteProfile = !!(user.profile && user.subscription);
 
+    // Return success response
     res.status(200).json({
       success: true,
       message: 'OAuth sign in successful',
@@ -578,11 +662,19 @@ export const oauthSignIn = async (req, res) => {
   }
 };
 
-// Sign Out - unchanged
+// ===================================
+// SESSION MANAGEMENT CONTROLLERS
+// ===================================
+
+/**
+ * Handles user sign-out by clearing authentication cookie
+ */
 export const signOut = async (req, res) => {
   try {
+    // Clear authentication cookie
     res.clearCookie('auth_token');
     
+    // Return success response
     res.status(200).json({
       success: true,
       message: 'Signed out successfully'
@@ -597,11 +689,15 @@ export const signOut = async (req, res) => {
   }
 };
 
-// Verify Token - unchanged
+/**
+ * Verifies authentication token validity
+ * - Returns basic user data if valid
+ */
 export const verifyAuthToken = async (req, res) => {
   try {
     const userId = req.userId;
 
+    // Retrieve minimal user data
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -614,6 +710,7 @@ export const verifyAuthToken = async (req, res) => {
       }
     });
 
+    // Handle user not found
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -621,6 +718,7 @@ export const verifyAuthToken = async (req, res) => {
       });
     }
 
+    // Return user data
     res.status(200).json({
       success: true,
       message: 'Token is valid',
