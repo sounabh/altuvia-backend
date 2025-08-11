@@ -9,16 +9,18 @@ const router = Router();
 // UNI ROUTES - 
 // ===================================
 
+router.post("/toggleSaved", extractUserIdFromToken, toggleAdded);
+router.get("/saved", extractUserIdFromToken, getSavedUniversities);
 
-router.post("/toggleSaved",extractUserIdFromToken,toggleAdded)
-router.get("/saved", extractUserIdFromToken, getSavedUniversities); // New route
-router.get('/:slug',getUniversityBySlug);
 // Departments
 router.get('/:slug/departments', getUniversityDepartments);
 
 // Programs
-router.get('/:slug/programs', getUniversityPrograms);
 router.get('/:slug/programs/:programId', getProgramDetails);
+router.get('/:slug/programs', getUniversityPrograms);
+
+// Generic university
+router.get('/:slug', getUniversityBySlug);
 
 export default router;
 
