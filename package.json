@@ -7,9 +7,12 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-   "dev": "node index.js",
-  "start": "node index.js"
-  },
+  "start": "node index.js",
+  "prisma:generate": "prisma generate",
+  "migrate:deploy": "prisma migrate deploy",
+  "deploy": "npm run migrate:deploy && npm run prisma:generate && npm start"
+},
+
   "dependencies": {
     "@prisma/client": "^6.10.0", 
     "bcrypt": "^6.0.0",
