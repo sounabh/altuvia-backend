@@ -184,6 +184,8 @@ export async function getSavedUniversities(req, res) {
 export async function getUniversityBySlug(req, res) {
   try {
     const { slug } = req.params;
+    console.log(slug);
+    
 
     if (!slug) {
       return res.status(400).json({ error: "Slug parameter is required" });
@@ -399,6 +401,10 @@ export async function getUniversityBySlug(req, res) {
     });
   }
 }
+
+
+
+
 
 
 export async function getUniversityDepartments(req, res) {
