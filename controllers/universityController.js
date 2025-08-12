@@ -122,8 +122,11 @@ export async function getSavedUniversities(req, res) {
       return res.status(404).json({ error: "User not found" });
     }
 
+
+
+
     // Return saved universities with all necessary data
-    const savedUniversities = user.savedUniversities.map((university) => ({
+    const savedUniversities = user?.savedUniversities?.map((university) => ({
       id: university.id,
       universityName: university.universityName,
       slug: university.slug,
@@ -161,6 +164,9 @@ export async function getSavedUniversities(req, res) {
       isAdded: true, // Since these are saved universities
     }));
 
+
+    console.log(savedUniversities,"saved");
+    
     return res.status(200).json({
       count: savedUniversities.length,
       universities: savedUniversities
@@ -174,6 +180,7 @@ export async function getSavedUniversities(req, res) {
   }
 }
 
+
 export async function getUniversityBySlug(req, res) {
   try {
     const { slug } = req.params;
@@ -185,7 +192,7 @@ export async function getUniversityBySlug(req, res) {
     const university = await prisma.university.findUnique({
       where: { 
         slug,
-        isActive: true // Only get active universities
+        isActive: true
       },
       include: {
         images: {
@@ -247,21 +254,18 @@ export async function getUniversityBySlug(req, res) {
       return res.status(404).json({ error: "University not found" });
     }
 
-    // Format university data for client with all important fields
     const formattedUniversity = {
       id: university.id,
       name: university.universityName,
-      universityName: university.universityName, // Keep both for compatibility
+      universityName: university.universityName,
       slug: university.slug,
-      location: `${university.city}${
-        university.state ? ", " + university.state : ""
-      }, ${university.country}`,
+      location: `${university.city}${university.state ? ", " + university.state : ""}, ${university.country}`,
       city: university.city,
       state: university.state,
       country: university.country,
       fullAddress: university.fullAddress,
 
-      // Images with proper error handling
+      // Images
       images: university.images.map((img) => ({
         url: img.imageUrl,
         alt: img.imageAltText || university.universityName,
@@ -270,18 +274,28 @@ export async function getUniversityBySlug(req, res) {
         isPrimary: img.isPrimary,
         type: img.imageType
       })),
-      primaryImage: university.images.find(img => img.isPrimary)?.imageUrl || 
-                    university.images[0]?.imageUrl || 
+      primaryImage: university.images.find(img => img.isPrimary)?.imageUrl ||
+                    university.images[0]?.imageUrl ||
                     "/default-university.jpg",
+
+      // ✅ Added for parity with getSavedUniversities
+      image: university.images[0]?.imageUrl || "/default-university.jpg",
+      imageAlt: university.images[0]?.imageAltText || university.universityName,
+      isAdded: false, // Default false, frontend can set true if saved
+      rank: university.ftGlobalRanking ? `#${university.ftGlobalRanking}` : "N/A",
+      gmatAverage: university.gmatAverageScore || "N/A",
+      deadline: university.averageDeadlines
+        ? university.averageDeadlines.split(",")[0]?.trim() || "TBD"
+        : "TBD",
 
       // Descriptions
       description: university.shortDescription,
       shortDescription: university.shortDescription,
       overview: university.overview,
-      biography: university.overview, // Keep for backward compatibility
+      biography: university.overview,
       history: university.history,
 
-      // Mission and Vision
+      // Mission & Vision
       missionStatement: university.missionStatement,
       visionStatement: university.visionStatement,
 
@@ -289,7 +303,7 @@ export async function getUniversityBySlug(req, res) {
       whyChooseHighlights: university.whyChooseHighlights || [],
 
       // Basic info
-      rating: 4.9, // Default rating - you might want to calculate this from reviews
+      rating: 4.9,
       websiteUrl: university.websiteUrl,
       brochureUrl: university.brochureUrl,
 
@@ -325,7 +339,7 @@ export async function getUniversityBySlug(req, res) {
       minimumGpa: university.minimumGpa,
       languageTestRequirements: university.languageTestRequirements,
 
-      // Financial information
+      // Financial
       tuitionFees: university.tuitionFees,
       additionalFees: university.additionalFees,
       totalCost: university.totalCost,
@@ -339,7 +353,7 @@ export async function getUniversityBySlug(req, res) {
       averageProgramLengthMonths: university.averageProgramLengthMonths,
       intakes: university.intakes,
 
-      // Contact information
+      // Contacts
       admissionsOfficeContact: university.admissionsOfficeContact,
       internationalOfficeContact: university.internationalOfficeContact,
       generalInquiriesContact: university.generalInquiriesContact,
@@ -347,14 +361,14 @@ export async function getUniversityBySlug(req, res) {
       // Career outcomes
       careerOutcomes: university.careerOutcomes,
 
-      // Additional documents
+      // Additional docs
       additionalDocumentUrls: university.additionalDocumentUrls || [],
 
-      // Status flags
+      // Flags
       isActive: university.isActive,
       isFeatured: university.isFeatured,
 
-      // Stats for display (formatted for UI)
+      // Stats
       stats: {
         students: university.studentsPerYear
           ? `${university.studentsPerYear.toLocaleString()}+`
@@ -365,7 +379,7 @@ export async function getUniversityBySlug(req, res) {
         avgGmat: university.gmatAverageScore || "N/A",
       },
 
-      // Relational data
+      // Relational
       tuitionBreakdowns: university.tuitionBreakdowns,
       scholarships: university.scholarships,
       feeStructures: university.feeStructures,
@@ -385,6 +399,7 @@ export async function getUniversityBySlug(req, res) {
     });
   }
 }
+
 
 export async function getUniversityDepartments(req, res) {
   try {
