@@ -10,8 +10,15 @@
     "start": "node index.js",
     "dev": "node index.js",
     "prisma:generate": "prisma generate",
-    "migrate:deploy": "prisma migrate deploy",
-    "deploy": "npm run migrate:deploy && npm run prisma:generate && npm start"
+    "prisma:push": "prisma db push",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:reset": "prisma migrate reset",
+    "prisma:studio": "prisma studio",
+    "prisma:sync": "npm run prisma:generate && npm run prisma:push",
+    "deploy": "npm run prisma:generate && npm run prisma:deploy && npm start",
+    "build": "npm run prisma:generate",
+    "postinstall": "npm run prisma:generate"
   },
   "dependencies": {
     "@prisma/client": "^6.10.0",
@@ -32,6 +39,5 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
-    
   }
 }

@@ -4,7 +4,8 @@ export async function toggleAdded(req, res) {
   try {
     const userId = req.userId; // Assumes middleware added this
     const { universityId } = req.body;
-    console.log(universityId);
+    console.log("University ID:", universityId);
+    console.log("User ID:", userId);
 
     if (!userId) {
       return res.status(401).json({ error: "User is not authenticated" });
@@ -18,7 +19,9 @@ export async function toggleAdded(req, res) {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       include: {
-        savedUniversities: true,
+        savedUniversities: {
+          select: { id: true } // Only select id for efficiency
+        },
       },
     });
 
@@ -29,6 +32,7 @@ export async function toggleAdded(req, res) {
     // ✅ Check if the university exists
     const university = await prisma.university.findUnique({
       where: { id: universityId },
+      select: { id: true, universityName: true } // Only select what we need
     });
 
     if (!university) {
@@ -40,11 +44,11 @@ export async function toggleAdded(req, res) {
       (u) => u.id === universityId
     );
 
-    let updatedUser;
+    let result;
 
     if (isAlreadySaved) {
       // ❌ Remove the university from saved list
-      updatedUser = await prisma.user.update({
+      await prisma.user.update({
         where: { id: userId },
         data: {
           savedUniversities: {
@@ -52,9 +56,10 @@ export async function toggleAdded(req, res) {
           },
         },
       });
+      result = { isAdded: false, action: 'removed', message: 'University removed from saved list' };
     } else {
       // ✅ Add the university to saved list
-      updatedUser = await prisma.user.update({
+      await prisma.user.update({
         where: { id: userId },
         data: {
           savedUniversities: {
@@ -62,12 +67,25 @@ export async function toggleAdded(req, res) {
           },
         },
       });
+      result = { isAdded: true, action: 'added', message: 'University added to saved list' };
     }
 
-    return res.status(200).json({ isAdded: !isAlreadySaved });
+    return res.status(200).json(result);
   } catch (error) {
     console.error("Error toggling university save status:", error);
-    res.status(500).json({ error: "Internal server error" });
+    
+    // Handle specific Prisma errors
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: "Record not found" });
+    }
+    if (error.code === 'P2002') {
+      return res.status(409).json({ error: "Constraint violation" });
+    }
+    
+    return res.status(500).json({ 
+      error: "Internal server error",
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 }
 
@@ -84,10 +102,16 @@ export async function getSavedUniversities(req, res) {
       where: { id: userId },
       include: {
         savedUniversities: {
+          where: { isActive: true }, // Only get active universities
           include: {
             images: {
               where: { isPrimary: true },
               take: 1,
+              select: {
+                imageUrl: true,
+                imageAltText: true,
+                imageTitle: true
+              }
             },
           },
         },
@@ -111,6 +135,7 @@ export async function getSavedUniversities(req, res) {
       }, ${university.country}`,
       images: university.images,
       image: university.images[0]?.imageUrl || "/default-university.jpg",
+      imageAlt: university.images[0]?.imageAltText || university.universityName,
       ftGlobalRanking: university.ftGlobalRanking,
       rank: university.ftGlobalRanking
         ? `#${university.ftGlobalRanking}`
@@ -120,9 +145,11 @@ export async function getSavedUniversities(req, res) {
       acceptanceRate: university.acceptanceRate,
       tuitionFees: university.tuitionFees,
       additionalFees: university.additionalFees,
+      totalCost: university.totalCost,
+      currency: university.currency || "USD",
       averageDeadlines: university.averageDeadlines,
       deadline: university.averageDeadlines
-        ? university.averageDeadlines.split(",")[0].trim()
+        ? university.averageDeadlines.split(",")[0]?.trim() || "TBD"
         : "TBD",
       shortDescription: university.shortDescription,
       overview: university.overview,
@@ -134,10 +161,16 @@ export async function getSavedUniversities(req, res) {
       isAdded: true, // Since these are saved universities
     }));
 
-    return res.status(200).json(savedUniversities);
+    return res.status(200).json({
+      count: savedUniversities.length,
+      universities: savedUniversities
+    });
   } catch (error) {
     console.error("Error fetching saved universities:", error);
-    res.status(500).json({ error: "Internal server error" });
+    return res.status(500).json({ 
+      error: "Internal server error",
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 }
 
@@ -150,21 +183,63 @@ export async function getUniversityBySlug(req, res) {
     }
 
     const university = await prisma.university.findUnique({
-      where: { slug },
+      where: { 
+        slug,
+        isActive: true // Only get active universities
+      },
       include: {
         images: {
           orderBy: { displayOrder: "asc" },
+          select: {
+            id: true,
+            imageUrl: true,
+            imageType: true,
+            imageTitle: true,
+            imageAltText: true,
+            imageCaption: true,
+            isPrimary: true,
+            displayOrder: true
+          }
         },
         programs: {
+          where: { isActive: true },
           orderBy: { programName: "asc" },
+          select: {
+            id: true,
+            programName: true,
+            programSlug: true,
+            degreeType: true,
+            programDescription: true,
+            programTuitionFees: true
+          }
         },
         departments: {
           orderBy: { name: "asc" },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            _count: {
+              select: { programs: true }
+            }
+          }
         },
-        tuitionBreakdowns: true,
-        scholarships: true,
-        feeStructures: true,
-        financialAids: true,
+        tuitionBreakdowns: {
+          where: { isActive: true },
+          orderBy: { academicYear: "desc" }
+        },
+        scholarships: {
+          where: { isActive: true },
+          orderBy: { scholarshipName: "asc" }
+        },
+        feeStructures: {
+          where: { isActive: true },
+          orderBy: { academicYear: "desc" }
+        },
+        financialAids: {
+          where: { isActive: true },
+          orderBy: { aidName: "asc" }
+        },
       },
     });
 
@@ -176,6 +251,7 @@ export async function getUniversityBySlug(req, res) {
     const formattedUniversity = {
       id: university.id,
       name: university.universityName,
+      universityName: university.universityName, // Keep both for compatibility
       slug: university.slug,
       location: `${university.city}${
         university.state ? ", " + university.state : ""
@@ -185,8 +261,18 @@ export async function getUniversityBySlug(req, res) {
       country: university.country,
       fullAddress: university.fullAddress,
 
-      // Images
-      images: university.images.map((img) => img.imageUrl),
+      // Images with proper error handling
+      images: university.images.map((img) => ({
+        url: img.imageUrl,
+        alt: img.imageAltText || university.universityName,
+        title: img.imageTitle,
+        caption: img.imageCaption,
+        isPrimary: img.isPrimary,
+        type: img.imageType
+      })),
+      primaryImage: university.images.find(img => img.isPrimary)?.imageUrl || 
+                    university.images[0]?.imageUrl || 
+                    "/default-university.jpg",
 
       // Descriptions
       description: university.shortDescription,
@@ -208,8 +294,20 @@ export async function getUniversityBySlug(req, res) {
       brochureUrl: university.brochureUrl,
 
       // Academic info
-      programs: university.programs.map((p) => p.programName),
-      departments: university.departments.map((d) => d.departmentName),
+      programs: university.programs.map((p) => ({
+        id: p.id,
+        name: p.programName,
+        slug: p.programSlug,
+        degreeType: p.degreeType,
+        description: p.programDescription,
+        tuitionFees: p.programTuitionFees
+      })),
+      departments: university.departments.map((d) => ({
+        id: d.id,
+        name: d.name,
+        slug: d.slug,
+        programCount: d._count.programs
+      })),
       accreditationDetails: university.accreditationDetails,
 
       // Rankings
@@ -231,7 +329,7 @@ export async function getUniversityBySlug(req, res) {
       tuitionFees: university.tuitionFees,
       additionalFees: university.additionalFees,
       totalCost: university.totalCost,
-      currency: university.currency,
+      currency: university.currency || "USD",
       scholarshipInfo: university.scholarshipInfo,
       financialAidDetails: university.financialAidDetails,
 
@@ -267,22 +365,11 @@ export async function getUniversityBySlug(req, res) {
         avgGmat: university.gmatAverageScore || "N/A",
       },
 
-      // Additional data (keep for backward compatibility)
-      additionalData: {
-        ftGlobalRanking: university.ftGlobalRanking,
-        ftRegionalRanking: university.ftRegionalRanking,
-        usNewsRanking: university.usNewsRanking,
-        qsRanking: university.qsRanking,
-        timesRanking: university.timesRanking,
-        tuitionFees: university.tuitionFees,
-        additionalFees: university.additionalFees,
-        totalCost: university.totalCost,
-        averageDeadlines: university.averageDeadlines,
-        gmatAverageScore: university.gmatAverageScore,
-        acceptanceRate: university.acceptanceRate,
-        studentsPerYear: university.studentsPerYear,
-        averageProgramLengthMonths: university.averageProgramLengthMonths,
-      },
+      // Relational data
+      tuitionBreakdowns: university.tuitionBreakdowns,
+      scholarships: university.scholarships,
+      feeStructures: university.feeStructures,
+      financialAids: university.financialAids,
 
       // Timestamps
       createdAt: university.createdAt,
@@ -292,7 +379,10 @@ export async function getUniversityBySlug(req, res) {
     return res.status(200).json(formattedUniversity);
   } catch (error) {
     console.error("Error fetching university:", error);
-    return res.status(500).json({ error: "Internal server error" });
+    return res.status(500).json({ 
+      error: "Internal server error",
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 }
 
@@ -305,24 +395,14 @@ export async function getUniversityDepartments(req, res) {
     }
 
     const university = await prisma.university.findUnique({
-      where: { slug },
-      include: {
-        departments: {
-          orderBy: { name: 'asc' },
-          include: {
-            programs: {
-              orderBy: { programName: 'asc' },
-              select: {
-                id: true,
-                programName: true,
-                programSlug: true,
-                degreeType: true,
-                programDescription: true,
-                isActive: true
-              }
-            }
-          }
-        }
+      where: { 
+        slug,
+        isActive: true
+      },
+      select: {
+        id: true,
+        universityName: true,
+        slug: true
       }
     });
 
@@ -330,18 +410,42 @@ export async function getUniversityDepartments(req, res) {
       return res.status(404).json({ error: "University not found" });
     }
 
+    const departments = await prisma.department.findMany({
+      where: { 
+        universityId: university.id
+      },
+      orderBy: { name: 'asc' },
+      include: {
+        programs: {
+          where: { isActive: true },
+          orderBy: { programName: 'asc' },
+          select: {
+            id: true,
+            programName: true,
+            programSlug: true,
+            degreeType: true,
+            programDescription: true,
+            isActive: true
+          }
+        },
+        _count: {
+          select: { programs: true }
+        }
+      }
+    });
+
     const formattedData = {
       university: {
         id: university.id,
         name: university.universityName,
         slug: university.slug
       },
-      departments: university.departments.map(dept => ({
+      departments: departments.map(dept => ({
         id: dept.id,
         name: dept.name,
         slug: dept.slug,
-        description: dept.description || null,
-        programs: dept.programs.filter(prog => prog.isActive).map(prog => ({
+        programCount: dept._count.programs,
+        programs: dept.programs.map(prog => ({
           id: prog.id,
           name: prog.programName,
           slug: prog.programSlug,
@@ -354,13 +458,17 @@ export async function getUniversityDepartments(req, res) {
     return res.status(200).json(formattedData);
   } catch (error) {
     console.error("Error fetching university departments:", error);
-    return res.status(500).json({ error: "Internal server error" });
+    return res.status(500).json({ 
+      error: "Internal server error",
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 }
+
 export async function getUniversityPrograms(req, res) {
   try {
     const { slug } = req.params;
-    const { department, degreeType, search } = req.query;
+    const { department, degreeType, search, page = 1, limit = 20 } = req.query;
 
     if (!slug) {
       return res
@@ -368,8 +476,31 @@ export async function getUniversityPrograms(req, res) {
         .json({ error: "University slug parameter is required" });
     }
 
+    // First get the university
+    const university = await prisma.university.findUnique({
+      where: { 
+        slug,
+        isActive: true 
+      },
+      select: {
+        id: true,
+        universityName: true,
+        slug: true,
+        city: true,
+        state: true,
+        country: true,
+      }
+    });
+
+    if (!university) {
+      return res.status(404).json({ error: "University not found" });
+    }
+
     // Build the where clause for programs
-    const programsWhere = {};
+    const programsWhere = {
+      universityId: university.id,
+      isActive: true
+    };
 
     if (department) {
       programsWhere.departmentId = department;
@@ -387,72 +518,77 @@ export async function getUniversityPrograms(req, res) {
       ];
     }
 
-    const university = await prisma.university.findUnique({
-      where: { slug },
-      include: {
-        programs: {
-          where: programsWhere,
-          orderBy: { programName: "asc" },
-          include: {
-            department: {
-              select: {
-                id: true,
-                name: true,
-              },
+    // Calculate pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Get programs with pagination
+    const [programs, totalPrograms] = await Promise.all([
+      prisma.program.findMany({
+        where: programsWhere,
+        orderBy: { programName: "asc" },
+        skip,
+        take: parseInt(limit),
+        include: {
+          department: {
+            select: {
+              id: true,
+              name: true,
             },
-            rankings: {
-              orderBy: { year: "desc" },
-              take: 1,
-            },
-            scholarships: {
-              where: { isActive: true },
-              take: 3,
-            },
+          },
+          rankings: {
+            orderBy: { year: "desc" },
+            take: 1,
+          },
+          scholarships: {
+            where: { isActive: true },
+            take: 3,
+            select: {
+              id: true,
+              scholarshipName: true,
+              amount: true,
+              currency: true
+            }
           },
         },
-        departments: {
-          select: {
-            id: true,
-            name: true,
-            _count: {
-              select: { programs: true },
-            },
-          },
-          orderBy: { name: "asc" },
+      }),
+      prisma.program.count({
+        where: programsWhere
+      })
+    ]);
+
+    // Get departments for filtering
+    const departments = await prisma.department.findMany({
+      where: { universityId: university.id },
+      select: {
+        id: true,
+        name: true,
+        _count: {
+          select: { programs: true },
         },
       },
+      orderBy: { name: "asc" },
     });
-
-    if (!university) {
-      return res.status(404).json({ error: "University not found" });
-    }
 
     // Get degree types for filtering
     const degreeTypes = await prisma.program.findMany({
       where: {
         universityId: university.id,
         degreeType: { not: null },
+        isActive: true
       },
       select: { degreeType: true },
       distinct: ["degreeType"],
     });
 
     const formattedData = {
-      university: {
-        id: university.id,
-        name: university.universityName,
-        slug: university.slug,
-        city: university.city,
-        state: university.state,
-        country: university.country,
-      },
-      departments: university.departments.map((dept) => ({
+      university,
+      departments: departments.map((dept) => ({
         id: dept.id,
         name: dept.name,
         programCount: dept._count.programs,
       })),
       degreeTypes: degreeTypes.map((dt) => dt.degreeType).filter(Boolean),
-      programs: university.programs.map((prog) => ({
+      programs: programs.map((prog) => ({
         id: prog.id,
         name: prog.programName,
         slug: prog.programSlug,
@@ -467,19 +603,25 @@ export async function getUniversityPrograms(req, res) {
         isActive: prog.isActive,
         department: prog.department,
         latestRanking: prog.rankings[0] || null,
-        scholarships: prog.scholarships.map((scholarship) => ({
-          id: scholarship.id,
-          name: scholarship.name,
-          amount: scholarship.amount,
-          currency: scholarship.currency,
-        })),
+        scholarships: prog.scholarships,
       })),
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalPrograms,
+        totalPages: Math.ceil(totalPrograms / parseInt(limit)),
+        hasNext: skip + programs.length < totalPrograms,
+        hasPrevious: parseInt(page) > 1
+      }
     };
 
     return res.status(200).json(formattedData);
   } catch (error) {
     console.error("Error fetching university programs:", error);
-    return res.status(500).json({ error: "Internal server error" });
+    return res.status(500).json({ 
+      error: "Internal server error",
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 }
 
@@ -496,10 +638,16 @@ export async function getProgramDetails(req, res) {
     // Try to find by programSlug first, then by id
     const program = await prisma.program.findFirst({
       where: {
-        OR: [
-          { programSlug: programId, university: { slug } },
-          { id: programId, university: { slug } },
-        ],
+        AND: [
+          { university: { slug, isActive: true } },
+          { isActive: true },
+          {
+            OR: [
+              { programSlug: programId },
+              { id: programId },
+            ]
+          }
+        ]
       },
       include: {
         university: {
@@ -510,28 +658,44 @@ export async function getProgramDetails(req, res) {
             city: true,
             state: true,
             country: true,
+            websiteUrl: true,
+            admissionsOfficeContact: true,
           },
         },
         department: {
           select: {
             id: true,
             name: true,
+            slug: true
           },
         },
         syllabus: true,
         rankings: {
           orderBy: { year: "desc" },
         },
-        externalLinks: true,
+        externalLinks: {
+          orderBy: { title: "asc" }
+        },
         scholarships: {
           where: { isActive: true },
+          orderBy: { scholarshipName: "asc" }
         },
-        tuitionBreakdowns: true,
-        feeStructures: true,
+        tuitionBreakdowns: {
+          where: { isActive: true },
+          orderBy: { academicYear: "desc" }
+        },
+        feeStructures: {
+          where: { isActive: true },
+          orderBy: { academicYear: "desc" }
+        },
         financialAids: {
           where: { isActive: true },
+          orderBy: { aidName: "asc" }
         },
-        EssayPrompt: true,
+        EssayPrompt: {
+          where: { isActive: true },
+          orderBy: { promptTitle: "asc" }
+        },
       },
     });
 
@@ -561,11 +725,13 @@ export async function getProgramDetails(req, res) {
       },
       university: {
         id: program.university.id,
-        name: program.university.universityName, // ✅ renamed for frontend
+        name: program.university.universityName,
         slug: program.university.slug,
         city: program.university.city,
         state: program.university.state,
         country: program.university.country,
+        websiteUrl: program.university.websiteUrl,
+        admissionsContact: program.university.admissionsOfficeContact
       },
       department: program.department,
       syllabus: program.syllabus,
@@ -581,6 +747,9 @@ export async function getProgramDetails(req, res) {
     return res.status(200).json(formattedData);
   } catch (error) {
     console.error("Error fetching program details:", error);
-    return res.status(500).json({ error: "Internal server error" });
+    return res.status(500).json({ 
+      error: "Internal server error",
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 }
