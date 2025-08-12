@@ -13,8 +13,6 @@
     "prisma:push": "prisma db push",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
-    "prisma:reset": "prisma migrate reset",
-    "prisma:studio": "prisma studio",
     "prisma:sync": "npm run prisma:generate && npm run prisma:push",
     "deploy": "npm run prisma:generate && npm run prisma:deploy && npm start",
     "build": "npm run prisma:generate",
