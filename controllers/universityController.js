@@ -4,8 +4,8 @@ export async function toggleAdded(req, res) {
   try {
     const userId = req.userId; // Assumes middleware added this
     const { universityId } = req.body;
-    console.log("University ID:", universityId);
-    console.log("User ID:", userId);
+  //  console.log("University ID:", universityId);
+   // console.log("User ID:", userId);
 
     if (!userId) {
       return res.status(401).json({ error: "User is not authenticated" });
@@ -165,7 +165,7 @@ export async function getSavedUniversities(req, res) {
     }));
 
 
-    console.log(savedUniversities,"saved");
+    //console.log(savedUniversities,"saved");
     
     return res.status(200).json({
       count: savedUniversities.length,
@@ -184,7 +184,8 @@ export async function getSavedUniversities(req, res) {
 export async function getUniversityBySlug(req, res) {
   try {
     const { slug } = req.params;
-    console.log(slug);
+    const userId = req.userId; // From authentication middleware (optional)
+    //console.log(slug);
     
 
     if (!slug) {
@@ -249,11 +250,23 @@ export async function getUniversityBySlug(req, res) {
           where: { isActive: true },
           orderBy: { aidName: "asc" }
         },
+        // ✅ NEW: Include savedByUsers to check if current user has saved this university
+        savedByUsers: {
+          select: {
+            id: true
+          }
+        }
       },
     });
 
     if (!university) {
       return res.status(404).json({ error: "University not found" });
+    }
+
+    // ✅ Check if current user has saved this university
+    let isAddedByCurrentUser = false;
+    if (userId) {
+      isAddedByCurrentUser = university.savedByUsers.some(user => user.id === userId);
     }
 
     const formattedUniversity = {
@@ -280,10 +293,10 @@ export async function getUniversityBySlug(req, res) {
                     university.images[0]?.imageUrl ||
                     "/default-university.jpg",
 
-      // ✅ Added for parity with getSavedUniversities
+      // ✅ Updated: Set isAdded based on current user's saved status
       image: university.images[0]?.imageUrl || "/default-university.jpg",
       imageAlt: university.images[0]?.imageAltText || university.universityName,
-      isAdded: false, // Default false, frontend can set true if saved
+      isAdded: isAddedByCurrentUser, // ✅ Set based on actual saved status
       rank: university.ftGlobalRanking ? `#${university.ftGlobalRanking}` : "N/A",
       gmatAverage: university.gmatAverageScore || "N/A",
       deadline: university.averageDeadlines
@@ -380,6 +393,9 @@ export async function getUniversityBySlug(req, res) {
           : "N/A",
         avgGmat: university.gmatAverageScore || "N/A",
       },
+
+      // ✅ NEW: Include savedByUsers for Header component
+      savedByUsers: university.savedByUsers,
 
       // Relational
       tuitionBreakdowns: university.tuitionBreakdowns,
@@ -645,6 +661,15 @@ export async function getUniversityPrograms(req, res) {
     });
   }
 }
+
+
+
+
+
+
+
+
+
 
 export async function getProgramDetails(req, res) {
   try {
