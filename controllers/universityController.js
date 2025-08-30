@@ -220,7 +220,7 @@ export async function getUniversityBySlug(req, res) {
             degreeType: true,
             programDescription: true,
             programTuitionFees: true,
-            EssayPrompt: {
+            essayPrompts: {  // ✅ FIXED: Changed from 'EssayPrompt' to 'essayPrompts'
               where: { isActive: true },
               orderBy: { createdAt: "asc" },
               select: {
@@ -446,10 +446,10 @@ export async function getUniversityBySlug(req, res) {
     let primaryEssay = null;
 
     university.programs.forEach(program => {
-      console.log(`Processing program: ${program.programName}, Essay prompts: ${program.EssayPrompt?.length || 0}`);
+      console.log(`Processing program: ${program.programName}, Essay prompts: ${program.essayPrompts?.length || 0}`);  // ✅ FIXED
       
-      if (program.EssayPrompt && program.EssayPrompt.length > 0) {
-        program.EssayPrompt.forEach(prompt => {
+      if (program.essayPrompts && program.essayPrompts.length > 0) {  // ✅ FIXED: Changed from 'EssayPrompt'
+        program.essayPrompts.forEach(prompt => {  // ✅ FIXED: Changed from 'EssayPrompt'
           console.log('Processing essay prompt:', {
             id: prompt.id,
             title: prompt.promptTitle,
