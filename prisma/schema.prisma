@@ -3,10 +3,10 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
-   relationMode = "prisma" // ✅ This is correct
+  provider     = "postgresql"
+  url          = env("DATABASE_URL")
+  directUrl    = env("DIRECT_URL")
+  relationMode = "prisma"
 }
 
 // ==================== USER MODELS ====================
@@ -28,8 +28,11 @@ model User {
   applications             Application[]
   scholarshipApplications  ScholarshipApplication[]
   financialAidApplications FinancialAidApplication[]
-  EssaySubmission          EssaySubmission[]
+  essaySubmissions         EssaySubmission[]
   savedUniversities        University[] @relation("UserSavedUniversities")
+  calendarEvents           CalendarEvent[]
+  eventReminders           EventReminder[]
+  essays                   Essay[]
 
   @@map("users")
 }
@@ -87,7 +90,6 @@ model Subscription {
   @@map("subscriptions")
 }
 
-// Optional: Track payment events for analytics (no sensitive data)
 model PaymentEvent {
   id            String   @id @default(cuid())
   userId        String?
@@ -117,7 +119,7 @@ model University {
   missionStatement           String?
   visionStatement            String?
   accreditationDetails       String?
-  whyChooseHighlights        String[] // Changed from String to String[]
+  whyChooseHighlights        String[]
   careerOutcomes             String?
   ftGlobalRanking            Int?
   ftRegionalRanking          Int?
@@ -150,7 +152,7 @@ model University {
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
 
-  // ✅ Newly Added Fields
+  // Additional Fields
   averageDeadlines           String?
   studentsPerYear            Int?
   brochureUrl                String?
@@ -168,8 +170,8 @@ model University {
   scholarships      Scholarship[]
   feeStructures     FeeStructure[]
   financialAids     FinancialAid[]
-
   savedByUsers      User[] @relation("UserSavedUniversities")
+  calendarEvents    CalendarEvent[]
 
   @@map("universities")
 }
@@ -194,12 +196,6 @@ model UniversityImage {
 
   @@map("university_images")
 }
-
-
-
-
-
-
 
 model Department {
   id           String   @id @default(cuid())
@@ -250,7 +246,9 @@ model Program {
   scholarships      Scholarship[]
   feeStructures     FeeStructure[]
   financialAids     FinancialAid[]
-  EssayPrompt       EssayPrompt[]
+  essayPrompts      EssayPrompt[]
+  calendarEvents    CalendarEvent[]
+  essays            Essay[]
 
   @@map("programs")
 }
@@ -346,12 +344,13 @@ model Admission {
   updatedAt DateTime @updatedAt
 
   // Relations
-  university   University          @relation(fields: [universityId], references: [id], onDelete: Cascade)
-  program      Program             @relation(fields: [programId], references: [id], onDelete: Cascade)
-  intakes      Intake[]
-  deadlines    AdmissionDeadline[]
-  applications Application[]
-  EssayPrompt  EssayPrompt[]
+  university        University          @relation(fields: [universityId], references: [id], onDelete: Cascade)
+  program           Program             @relation(fields: [programId], references: [id], onDelete: Cascade)
+  intakes           Intake[]
+  deadlines         AdmissionDeadline[]
+  applications      Application[]
+  essayPrompts      EssayPrompt[]
+  calendarEvents    CalendarEvent[]
 
   @@unique([universityId, programId])
   @@map("admissions")
@@ -388,10 +387,11 @@ model Intake {
   updatedAt DateTime @updatedAt
 
   // Relations
-  admission    Admission           @relation(fields: [admissionId], references: [id], onDelete: Cascade)
-  deadlines    AdmissionDeadline[]
-  applications Application[]
-  EssayPrompt  EssayPrompt[]
+  admission         Admission           @relation(fields: [admissionId], references: [id], onDelete: Cascade)
+  deadlines         AdmissionDeadline[]
+  applications      Application[]
+  essayPrompts      EssayPrompt[]
+  calendarEvents    CalendarEvent[]
 
   @@unique([admissionId, intakeType, intakeYear])
   @@map("intakes")
@@ -427,8 +427,9 @@ model AdmissionDeadline {
   updatedAt DateTime @updatedAt
 
   // Relations
-  admission Admission @relation(fields: [admissionId], references: [id], onDelete: Cascade)
-  intake    Intake?   @relation(fields: [intakeId], references: [id], onDelete: Cascade)
+  admission       Admission @relation(fields: [admissionId], references: [id], onDelete: Cascade)
+  intake          Intake?   @relation(fields: [intakeId], references: [id], onDelete: Cascade)
+  calendarEvents  CalendarEvent[]
 
   @@map("admission_deadlines")
 }
@@ -436,8 +437,8 @@ model AdmissionDeadline {
 model Application {
   id           String  @id @default(cuid())
   admissionId  String
-  universityId String // Added: Direct reference to university
-  programId    String // Added: Direct reference to program
+  universityId String
+  programId    String
   intakeId     String?
   userId       String? // If user is logged in
 
@@ -507,6 +508,8 @@ model Application {
   scholarshipApplications  ScholarshipApplication[]
   financialAidApplications FinancialAidApplication[]
   essaySubmissions         EssaySubmission[]
+  calendarEvents           CalendarEvent[]
+  essays                   Essay[]
 
   @@map("applications")
 }
@@ -599,7 +602,8 @@ model Interview {
   updatedAt DateTime @updatedAt
 
   // Relations
-  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  application     Application     @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  calendarEvents  CalendarEvent[]
 
   @@map("interviews")
 }
@@ -699,10 +703,11 @@ model Scholarship {
   updatedAt            DateTime  @updatedAt
 
   // Relations
-  university   University               @relation(fields: [universityId], references: [id], onDelete: Cascade)
-  program      Program?                 @relation(fields: [programId], references: [id], onDelete: Cascade)
-  documents    ScholarshipDocument[]
-  applications ScholarshipApplication[]
+  university         University               @relation(fields: [universityId], references: [id], onDelete: Cascade)
+  program            Program?                 @relation(fields: [programId], references: [id], onDelete: Cascade)
+  documents          ScholarshipDocument[]
+  applications       ScholarshipApplication[]
+  calendarEvents     CalendarEvent[]
 
   @@unique([universityId, scholarshipSlug])
   @@map("scholarships")
@@ -791,6 +796,8 @@ model FeeStructure {
   grandTotal          Float
   currency            String    @default("USD")
   currencySymbol      String    @default("$")
+  paymentTerms        String?
+  installmentCount    Int?      @default(1)
   isActive            Boolean   @default(true)
   effectiveDate       DateTime  @default(now())
   expiryDate          DateTime?
@@ -909,11 +916,13 @@ model RefreshToken {
   @@map("refresh_tokens")
 }
 
+// ==================== ESSAY MODELS ====================
+
 model EssayPrompt {
   id           String   @id @default(cuid())
   admissionId  String?
-  programId    String? // Optional if prompt is program-specific
-  intakeId     String? // Optional if intake-specific
+  programId    String?
+  intakeId     String?
   promptTitle  String
   promptText   String
   wordLimit    Int
@@ -928,6 +937,7 @@ model EssayPrompt {
   program     Program?          @relation(fields: [programId], references: [id], onDelete: Cascade)
   intake      Intake?           @relation(fields: [intakeId], references: [id], onDelete: Cascade)
   submissions EssaySubmission[]
+  essays      Essay[]
 
   @@map("essay_prompts")
 }
@@ -963,4 +973,215 @@ model EssaySubmission {
   application Application? @relation(fields: [applicationId], references: [id], onDelete: Cascade)
 
   @@map("essay_submissions")
+}
+
+model Essay {
+  id               String   @id @default(cuid())
+  userId           String?
+  applicationId    String?
+  programId        String
+  essayPromptId    String
+  
+  // Essay Content
+  title            String
+  content          String   @default("")
+  wordCount        Int      @default(0)
+  wordLimit        Int      @default(500)
+  
+  // Status and Priority
+  status           String   @default("DRAFT") // DRAFT, IN_PROGRESS, COMPLETED, SUBMITTED
+  priority         String   @default("medium") // high, medium, low
+  
+  // Metadata
+  lastModified     DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  
+  // Auto-save tracking
+  lastAutoSaved    DateTime @default(now())
+  autoSaveEnabled  Boolean  @default(true)
+
+  // Relations
+  user            User?           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  application     Application?    @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  program         Program         @relation(fields: [programId], references: [id], onDelete: Cascade)
+  essayPrompt     EssayPrompt     @relation(fields: [essayPromptId], references: [id], onDelete: Cascade)
+  versions        EssayVersion[]
+  aiResults       AIResult[]
+
+  @@unique([userId, programId, essayPromptId])
+  @@map("essays")
+}
+
+model EssayVersion {
+  id          String   @id @default(cuid())
+  essayId     String
+  
+  // Version Content
+  content     String
+  wordCount   Int
+  label       String   // User-defined label like "Draft 1", "Final Version"
+  
+  // Version Metadata
+  timestamp   DateTime @default(now())
+  isAutoSave  Boolean  @default(false) // Distinguish manual saves from auto-saves
+  
+  // Version Comparison
+  changesSinceLastVersion String? // Brief description of changes
+  
+  // Relations
+  essay     Essay      @relation(fields: [essayId], references: [id], onDelete: Cascade)
+  aiResults AIResult[]
+
+  @@map("essay_versions")
+  @@index([essayId, timestamp])
+}
+
+model AIResult {
+  id              String   @id @default(cuid())
+  essayId         String
+  essayVersionId  String?  // Optional: AI result for specific version
+  
+  // AI Analysis Type
+  analysisType    String   // suggestions, grammar_check, readability, structure, completion
+  
+  // AI Result Data
+  overallScore    Float?   // 0-100 quality score
+  suggestions     String   // JSON array of suggestion objects
+  strengths       String?  // JSON array of identified strengths
+  improvements    String?  // JSON array of improvement areas
+  warnings        String?  // JSON array of critical issues
+  
+  // AI Provider Info
+  aiProvider      String   @default("gemini") // gemini, openai, claude
+  modelUsed       String?  // model version used
+  promptVersion   String?  // version of analysis prompt used
+  
+  // Processing Status
+  status          String   @default("completed") // processing, completed, failed
+  processingTime  Int?     // milliseconds taken to generate
+  errorMessage    String?  // If analysis failed
+  
+  // Content Analysis Metrics
+  readabilityScore     Float?
+  sentenceCount        Int?
+  paragraphCount       Int?
+  avgSentenceLength    Float?
+  complexWordCount     Int?
+  passiveVoiceCount    Int?
+  
+  // Metadata
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  essay        Essay         @relation(fields: [essayId], references: [id], onDelete: Cascade)
+  essayVersion EssayVersion? @relation(fields: [essayVersionId], references: [id], onDelete: Cascade)
+
+  @@map("ai_results")
+  @@index([essayId, analysisType])
+  @@index([essayVersionId])
+}
+
+// ==================== CALENDAR MODELS ====================
+
+model CalendarEvent {
+  id          String   @id @default(cuid())
+  userId      String?  // Event owner (optional for system-generated events)
+  
+  // Event Basic Information
+  title       String
+  description String?
+  location    String?
+  
+  // Date & Time
+  startDate   DateTime
+  endDate     DateTime
+  timezone    String   @default("UTC")
+  isAllDay    Boolean  @default(false)
+  
+  // Event Classification
+  eventType   String   // deadline, interview, task, workshop, meeting, reminder, system
+  eventStatus String   @default("active") // active, completed, cancelled, postponed
+  priority    String   @default("medium") // low, medium, high, critical
+  
+  // Application Context (optional relations)
+  universityId        String?
+  programId           String?
+  applicationId       String?
+  admissionId         String?
+  intakeId            String?
+  admissionDeadlineId String?
+  interviewId         String?
+  scholarshipId       String?
+  
+  // Event Properties
+  isRecurring         Boolean @default(false)
+  recurringPattern    String? // JSON string for recurrence rules
+  parentEventId       String? // For recurring event instances
+  
+  // Reminder and Notification Settings
+  hasReminders        Boolean @default(true)
+  isSystemGenerated   Boolean @default(false) // Auto-created from deadlines, etc.
+  
+  // Display Properties
+  color               String? // Hex color code for event display
+  isVisible           Boolean @default(true)
+  
+  // Completion Tracking
+  completionStatus    String  @default("pending") // pending, in_progress, completed, missed
+  completedAt         DateTime?
+  completionNotes     String?
+  
+  // Metadata
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  lastModifiedBy      String? // User ID who last modified
+
+  // Relations
+  user              User?              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  university        University?        @relation(fields: [universityId], references: [id], onDelete: Cascade)
+  program           Program?           @relation(fields: [programId], references: [id], onDelete: Cascade)
+  application       Application?       @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  admission         Admission?         @relation(fields: [admissionId], references: [id], onDelete: Cascade)
+  intake            Intake?            @relation(fields: [intakeId], references: [id], onDelete: Cascade)
+  admissionDeadline AdmissionDeadline? @relation(fields: [admissionDeadlineId], references: [id], onDelete: Cascade)
+  interview         Interview?         @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  scholarship       Scholarship?       @relation(fields: [scholarshipId], references: [id], onDelete: Cascade)
+  reminders         EventReminder[]
+
+  @@map("calendar_events")
+  @@index([parentEventId])
+}
+
+model EventReminder {
+  id              String   @id @default(cuid())
+  eventId         String
+  userId          String
+  
+  // Reminder Configuration
+  reminderType    String   // email, push, sms, in_app
+  reminderTime    Int      // Minutes before event (e.g., 1440 = 24 hours)
+  reminderMessage String?  // Custom reminder message
+  
+  // Scheduling
+  scheduledFor    DateTime // Calculated reminder send time
+  
+  // Status Tracking
+  isActive        Boolean  @default(true)
+  isSent          Boolean  @default(false)
+  sentAt          DateTime?
+  failureReason   String?  // If reminder failed to send
+  retryCount      Int      @default(0)
+  
+  // Metadata
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  event CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId, reminderTime, reminderType])
+  @@map("event_reminders")
 }

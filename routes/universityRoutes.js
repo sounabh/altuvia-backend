@@ -20,7 +20,7 @@ router.get('/:slug/programs/:programId', getProgramDetails);
 router.get('/:slug/programs', getUniversityPrograms);
 
 // Generic university
-router.get('/:slug', getUniversityBySlug);
+router.get('/:slug',extractUserIdFromToken, getUniversityBySlug);
 
 export default router;
 

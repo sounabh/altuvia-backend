@@ -4,8 +4,8 @@ export async function toggleAdded(req, res) {
   try {
     const userId = req.userId; // Assumes middleware added this
     const { universityId } = req.body;
-  //  console.log("University ID:", universityId);
-   // console.log("User ID:", userId);
+   console.log("University ID:", universityId);
+    console.log("User ID:", userId);
 
     if (!userId) {
       return res.status(401).json({ error: "User is not authenticated" });
@@ -180,14 +180,13 @@ export async function getSavedUniversities(req, res) {
   }
 }
 
-
 export async function getUniversityBySlug(req, res) {
   try {
     const { slug } = req.params;
     const userId = req.userId; // From authentication middleware (optional)
-    //console.log(slug);
     
-
+    console.log('Debug: Request params:', { slug, userId });
+    
     if (!slug) {
       return res.status(400).json({ error: "Slug parameter is required" });
     }
@@ -220,7 +219,32 @@ export async function getUniversityBySlug(req, res) {
             programSlug: true,
             degreeType: true,
             programDescription: true,
-            programTuitionFees: true
+            programTuitionFees: true,
+            EssayPrompt: {
+              where: { isActive: true },
+              orderBy: { createdAt: "asc" },
+              select: {
+                id: true,
+                promptTitle: true,
+                promptText: true,
+                wordLimit: true,
+                minWordCount: true,
+                isMandatory: true,
+                isActive: true,
+                programId: true,
+                submissions: userId ? {
+                  where: { userId: userId },
+                  select: {
+                    id: true,
+                    content: true,
+                    wordCount: true,
+                    status: true,
+                    submissionDate: true,
+                    lastEditedAt: true
+                  }
+                } : false
+              }
+            }
           }
         },
         departments: {
@@ -250,24 +274,314 @@ export async function getUniversityBySlug(req, res) {
           where: { isActive: true },
           orderBy: { aidName: "asc" }
         },
-        // ✅ NEW: Include savedByUsers to check if current user has saved this university
         savedByUsers: {
           select: {
             id: true
+          }
+        },
+        admissions: {
+          where: { isActive: true },
+          include: {
+            deadlines: {
+              where: { isActive: true },
+              orderBy: { deadlineDate: "asc" },
+              select: {
+                id: true,
+                deadlineType: true,
+                deadlineDate: true,
+                deadlineTime: true,
+                timezone: true,
+                title: true,
+                description: true,
+                priority: true,
+                isExtended: true,
+                originalDeadline: true,
+                isActive: true,
+                admissionId: true
+              }
+            },
+            intakes: {
+              where: { isActive: true },
+              orderBy: { intakeYear: "desc" },
+              select: {
+                id: true,
+                intakeName: true,
+                intakeType: true,
+                intakeYear: true,
+                intakeMonth: true,
+                startDate: true,
+                endDate: true,
+                applicationOpenDate: true,
+                applicationCloseDate: true,
+                intakeStatus: true,
+                isActive: true,
+                admissionId: true
+              }
+            }
           }
         }
       },
     });
 
+    console.log('Debug: University found:', !!university);
+    if (university) {
+      console.log('Debug: University ID:', university.id);
+      console.log('Debug: Programs count:', university.programs?.length || 0);
+      console.log('Debug: Admissions count:', university.admissions?.length || 0);
+    }
+
     if (!university) {
       return res.status(404).json({ error: "University not found" });
     }
 
-    // ✅ Check if current user has saved this university
+    // FIXED: Get calendar events using the same logic as the calendar route
+    let calendarEvents = [];
+    if (userId) {
+      console.log('Debug: Fetching calendar events for university:', university.id, 'and user:', userId);
+      
+      const where = {
+        userId: userId,
+        universityId: university.id,
+        isVisible: true
+      };
+
+      calendarEvents = await prisma.calendarEvent.findMany({
+        where,
+        include: {
+          university: {
+            select: {
+              id: true,
+              universityName: true,
+              slug: true,
+              country: true,
+              city: true
+            }
+          },
+          program: {
+            select: {
+              id: true,
+              programName: true,
+              programSlug: true,
+              degreeType: true
+            }
+          },
+          application: {
+            select: {
+              id: true,
+              applicationStatus: true,
+              firstName: true,
+              lastName: true
+            }
+          },
+          admission: {
+            select: {
+              id: true,
+              acceptanceRate: true,
+              applicationFee: true
+            }
+          },
+          intake: {
+            select: {
+              id: true,
+              intakeName: true,
+              intakeType: true,
+              intakeYear: true
+            }
+          },
+          admissionDeadline: {
+            select: {
+              id: true,
+              deadlineType: true,
+              title: true,
+              priority: true
+            }
+          },
+          interview: {
+            select: {
+              id: true,
+              interviewType: true,
+              interviewStatus: true,
+              duration: true,
+              location: true,
+              meetingLink: true
+            }
+          },
+          scholarship: {
+            select: {
+              id: true,
+              scholarshipName: true,
+              amount: true,
+              currency: true
+            }
+          },
+          reminders: {
+            where: { isActive: true },
+            select: {
+              id: true,
+              reminderType: true,
+              reminderTime: true,
+              isActive: true,
+              isSent: true,
+              scheduledFor: true,
+              reminderMessage: true
+            }
+          }
+        },
+        orderBy: {
+          startDate: 'asc'
+        }
+      });
+
+      console.log('Debug: Calendar events found:', calendarEvents.length);
+    }
+
+    // Check if current user has saved this university
     let isAddedByCurrentUser = false;
     if (userId) {
       isAddedByCurrentUser = university.savedByUsers.some(user => user.id === userId);
     }
+
+    // Process essay prompts from programs - only return first one for display
+    const allEssayPrompts = [];
+    let primaryEssay = null;
+
+    university.programs.forEach(program => {
+      console.log(`Processing program: ${program.programName}, Essay prompts: ${program.EssayPrompt?.length || 0}`);
+      
+      if (program.EssayPrompt && program.EssayPrompt.length > 0) {
+        program.EssayPrompt.forEach(prompt => {
+          console.log('Processing essay prompt:', {
+            id: prompt.id,
+            title: prompt.promptTitle,
+            programId: program.id,
+            programName: program.programName
+          });
+          
+          const submission = prompt.submissions && prompt.submissions.length > 0 ? prompt.submissions[0] : null;
+          const essayData = {
+            id: prompt.id,
+            title: prompt.promptTitle,
+            text: prompt.promptText,
+            wordLimit: prompt.wordLimit,
+            minWordCount: prompt.minWordCount,
+            isMandatory: prompt.isMandatory,
+            programId: program.id,
+            programName: program.programName,
+            status: submission ? submission.status : "not-started",
+            progress: submission && submission.content ? 
+              Math.min(Math.round((submission.wordCount / prompt.wordLimit) * 100), 100) : 0,
+            wordCount: submission ? submission.wordCount : 0,
+            content: submission ? submission.content : "",
+            lastEditedAt: submission ? submission.lastEditedAt : null,
+            submissionDate: submission ? submission.submissionDate : null
+          };
+
+          allEssayPrompts.push(essayData);
+          
+          if (!primaryEssay) {
+            primaryEssay = essayData;
+          }
+        });
+      }
+    });
+
+    console.log('Debug: Total essay prompts found:', allEssayPrompts.length);
+    console.log('Debug: Primary essay:', primaryEssay?.title || 'None');
+
+    // Process deadlines from all admissions
+    const deadlines = [];
+    university.admissions.forEach(admission => {
+      if (admission.deadlines && admission.deadlines.length > 0) {
+        admission.deadlines.forEach(deadline => {
+          const now = new Date();
+          const deadlineDate = new Date(deadline.deadlineDate);
+          const daysLeft = Math.ceil((deadlineDate - now) / (1000 * 60 * 60 * 24));
+          
+          deadlines.push({
+            id: deadline.id,
+            type: "deadline",
+            task: deadline.title,
+            description: deadline.description,
+            date: deadline.deadlineDate,
+            time: deadline.deadlineTime,
+            timezone: deadline.timezone,
+            status: daysLeft < 0 ? "overdue" : daysLeft === 0 ? "due-today" : "upcoming",
+            priority: deadline.priority,
+            daysLeft: Math.max(0, daysLeft),
+            deadlineType: deadline.deadlineType,
+            isExtended: deadline.isExtended,
+            originalDeadline: deadline.originalDeadline
+          });
+        });
+      }
+    });
+
+    // FIXED: Process calendar events using the same transform logic as calendar route
+    const transformedCalendarEvents = calendarEvents.map(event => {
+      const now = new Date();
+      const eventDate = new Date(event.startDate);
+      const daysLeft = Math.ceil((eventDate - now) / (1000 * 60 * 60 * 24));
+      
+      return {
+        id: event.id,
+        type: "event",
+        task: event.title,
+        description: event.description,
+        date: event.startDate,
+        endDate: event.endDate,
+        time: event.isAllDay ? "All Day" : new Date(event.startDate).toLocaleTimeString('en-US', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        }),
+        location: event.location || "TBD",
+        status: event.completionStatus === "completed" ? "completed" : 
+               event.completionStatus === "missed" ? "missed" :
+               daysLeft < 0 ? "past" : 
+               daysLeft === 0 ? "today" : "upcoming",
+        priority: event.priority,
+        daysLeft: Math.max(0, daysLeft),
+        eventType: event.eventType,
+        completionStatus: event.completionStatus,
+        completedAt: event.completedAt,
+        color: event.color,
+        isAllDay: event.isAllDay,
+        timezone: event.timezone,
+        isSystemGenerated: event.isSystemGenerated,
+        // Additional fields from calendar route transformation
+        school: event.university?.universityName || 'General',
+        universityId: event.universityId,
+        universitySlug: event.university?.slug,
+        country: event.university?.country,
+        city: event.university?.city,
+        program: event.program?.programName,
+        programId: event.programId,
+        programSlug: event.program?.programSlug,
+        degreeType: event.program?.degreeType,
+        applicationId: event.applicationId,
+        applicationStatus: event.application?.applicationStatus,
+        applicantName: event.application ? 
+          `${event.application.firstName} ${event.application.lastName}` : null,
+        deadlineType: event.admissionDeadline?.deadlineType,
+        interviewType: event.interview?.interviewType,
+        interviewDuration: event.interview?.duration,
+        interviewLocation: event.interview?.location || event.interview?.meetingLink,
+        scholarshipAmount: event.scholarship?.amount,
+        scholarshipCurrency: event.scholarship?.currency,
+        reminders: event.reminders,
+        reminderCount: event.reminders?.length || 0,
+        createdAt: event.createdAt.toISOString(),
+        updatedAt: event.updatedAt.toISOString()
+      };
+    });
+
+    // Combine deadlines and events, sort by date
+    const tasksAndEvents = [...deadlines, ...transformedCalendarEvents].sort((a, b) => 
+      new Date(a.date) - new Date(b.date)
+    );
+
+    console.log('Debug: Final tasksAndEvents count:', tasksAndEvents.length);
+    console.log('Debug: Deadlines count:', deadlines.length);
+    console.log('Debug: Calendar events count:', transformedCalendarEvents.length);
 
     const formattedUniversity = {
       id: university.id,
@@ -293,10 +607,9 @@ export async function getUniversityBySlug(req, res) {
                     university.images[0]?.imageUrl ||
                     "/default-university.jpg",
 
-      // ✅ Updated: Set isAdded based on current user's saved status
       image: university.images[0]?.imageUrl || "/default-university.jpg",
       imageAlt: university.images[0]?.imageAltText || university.universityName,
-      isAdded: isAddedByCurrentUser, // ✅ Set based on actual saved status
+      isAdded: isAddedByCurrentUser,
       rank: university.ftGlobalRanking ? `#${university.ftGlobalRanking}` : "N/A",
       gmatAverage: university.gmatAverageScore || "N/A",
       deadline: university.averageDeadlines
@@ -394,7 +707,6 @@ export async function getUniversityBySlug(req, res) {
         avgGmat: university.gmatAverageScore || "N/A",
       },
 
-      // ✅ NEW: Include savedByUsers for Header component
       savedByUsers: university.savedByUsers,
 
       // Relational
@@ -403,10 +715,30 @@ export async function getUniversityBySlug(req, res) {
       feeStructures: university.feeStructures,
       financialAids: university.financialAids,
 
+      // Application workspace data
+      allEssayPrompts: allEssayPrompts,
+      primaryEssay: primaryEssay,
+      essayPrompts: primaryEssay ? [primaryEssay] : [],
+      tasksAndEvents: tasksAndEvents,
+      calendarEvents: transformedCalendarEvents,
+      deadlines: deadlines,
+      admissions: university.admissions,
+
       // Timestamps
       createdAt: university.createdAt,
       updatedAt: university.updatedAt,
     };
+
+    console.log('Debug: Response summary:', {
+      universityId: formattedUniversity.id,
+      universityName: formattedUniversity.name,
+      allEssayPromptsCount: formattedUniversity.allEssayPrompts.length,
+      primaryEssay: formattedUniversity.primaryEssay?.title || 'None',
+      tasksAndEventsCount: formattedUniversity.tasksAndEvents.length,
+      calendarEventsCount: formattedUniversity.calendarEvents.length,
+      deadlinesCount: formattedUniversity.deadlines.length,
+      admissionsCount: formattedUniversity.admissions.length
+    });
 
     return res.status(200).json(formattedUniversity);
   } catch (error) {
@@ -417,8 +749,6 @@ export async function getUniversityBySlug(req, res) {
     });
   }
 }
-
-
 
 
 
