@@ -1070,6 +1070,19 @@ model AIResult {
   complexWordCount     Int?
   passiveVoiceCount    Int?
   
+
+// Additional analysis metrics
+
+  structureScore       Float?
+  contentRelevance     Float?
+  narrativeFlow        Float?
+  leadershipEmphasis   Float?
+  specificityScore     Float?
+  grammarIssues        Int?
+
+
+
+
   // Metadata
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

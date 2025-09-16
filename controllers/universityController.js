@@ -2,9 +2,10 @@ import prisma from "../lib/prisma.js";
 
 export async function toggleAdded(req, res) {
   try {
-    const userId = req.userId; // Assumes middleware added this
+    const userId = req.userId;
     const { universityId } = req.body;
-   console.log("University ID:", universityId);
+
+    console.log("University ID:", universityId);
     console.log("User ID:", userId);
 
     if (!userId) {
@@ -15,39 +16,29 @@ export async function toggleAdded(req, res) {
       return res.status(400).json({ error: "University ID is required" });
     }
 
-    // ✅ Check if the user exists and include savedUniversities
-    const user = await prisma.user.findUnique({
+    // 🚀 SUPER FAST: Single query to check current state
+    const userWithSavedUniversity = await prisma.user.findUnique({
       where: { id: userId },
-      include: {
+      select: {
+        id: true,
         savedUniversities: {
-          select: { id: true } // Only select id for efficiency
-        },
-      },
+          where: { id: universityId },
+          select: { id: true }
+        }
+      }
     });
 
-    if (!user) {
+    if (!userWithSavedUniversity) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // ✅ Check if the university exists
-    const university = await prisma.university.findUnique({
-      where: { id: universityId },
-      select: { id: true, universityName: true } // Only select what we need
-    });
+    const isAlreadySaved = userWithSavedUniversity.savedUniversities.length > 0;
 
-    if (!university) {
-      return res.status(404).json({ error: "University not found" });
-    }
-
-    // ✅ Check if university is already saved
-    const isAlreadySaved = user.savedUniversities.some(
-      (u) => u.id === universityId
-    );
-
+    // 🚀 Direct update without transaction - much faster
     let result;
 
     if (isAlreadySaved) {
-      // ❌ Remove the university from saved list
+      // Remove the university from saved list
       await prisma.user.update({
         where: { id: userId },
         data: {
@@ -56,53 +47,74 @@ export async function toggleAdded(req, res) {
           },
         },
       });
-      result = { isAdded: false, action: 'removed', message: 'University removed from saved list' };
+
+      result = { 
+        isAdded: false, 
+        action: 'removed', 
+        message: 'University removed from saved list' 
+      };
     } else {
-      // ✅ Add the university to saved list
-      await prisma.user.update({
-        where: { id: userId },
-        data: {
-          savedUniversities: {
-            connect: { id: universityId },
+      // Add the university to saved list
+      try {
+        await prisma.user.update({
+          where: { id: userId },
+          data: {
+            savedUniversities: {
+              connect: { id: universityId },
+            },
           },
-        },
-      });
-      result = { isAdded: true, action: 'added', message: 'University added to saved list' };
+        });
+
+        result = { 
+          isAdded: true, 
+          action: 'added', 
+          message: 'University added to saved list' 
+        };
+      } catch (connectError) {
+        // Handle case where university doesn't exist
+        if (connectError.code === 'P2025') {
+          return res.status(404).json({ error: "University not found" });
+        }
+        throw connectError;
+      }
     }
 
     return res.status(200).json(result);
+
   } catch (error) {
     console.error("Error toggling university save status:", error);
-    
-    // Handle specific Prisma errors
+
+    // Handle Prisma errors
     if (error.code === 'P2025') {
       return res.status(404).json({ error: "Record not found" });
     }
     if (error.code === 'P2002') {
       return res.status(409).json({ error: "Constraint violation" });
     }
-    
-    return res.status(500).json({ 
+    if (error.code === 'P2003') {
+      return res.status(404).json({ error: "University not found" });
+    }
+
+    return res.status(500).json({
       error: "Internal server error",
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 }
-
 export async function getSavedUniversities(req, res) {
   try {
     const userId = req.userId; // From authentication middleware
-
+    
     if (!userId) {
       return res.status(401).json({ error: "User is not authenticated" });
     }
 
-    // Fetch user with saved universities
+    // Fetch user with saved universities and all related data
     const user = await prisma.user.findUnique({
       where: { id: userId },
       include: {
         savedUniversities: {
-          where: { isActive: true }, // Only get active universities
+          where: { isActive: true },
           include: {
             images: {
               where: { isPrimary: true },
@@ -113,67 +125,229 @@ export async function getSavedUniversities(req, res) {
                 imageTitle: true
               }
             },
-          },
-        },
-      },
+            programs: {
+              include: {
+                // Get essays for this user and program
+                essays: {
+                  where: { userId: userId },
+                  select: {
+                    id: true,
+                    status: true,
+                    wordCount: true,
+                    wordLimit: true,
+                    priority: true,
+                    essayPrompt: {
+                      select: {
+                        promptTitle: true,
+                        isMandatory: true
+                      }
+                    }
+                  }
+                },
+                // Get essay prompts for the program
+                essayPrompts: {
+                  where: { isActive: true },
+                  select: {
+                    id: true,
+                    promptTitle: true,
+                    isMandatory: true,
+                    wordLimit: true
+                  }
+                }
+              }
+            },
+            // Get calendar events for this university and user
+            calendarEvents: {
+              where: {
+                userId: userId,
+                isVisible: true
+              },
+              select: {
+                id: true,
+                title: true,
+                eventType: true,
+                eventStatus: true,
+                completionStatus: true,
+                startDate: true,
+                endDate: true,
+                priority: true
+              }
+            }
+          }
+        }
+      }
     });
 
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
+    // Process saved universities with progress calculation
+    const savedUniversities = user?.savedUniversities?.map((university) => {
+      // Collect all essays from all programs
+      const allEssays = university.programs.flatMap(program => program.essays || []);
+      const allEssayPrompts = university.programs.flatMap(program => program.essayPrompts || []);
+      
+      // Calendar events for this university
+      const calendarEvents = university.calendarEvents || [];
+      
+      // Calculate essay progress
+      const totalEssayPrompts = allEssayPrompts.length;
+      const completedEssays = allEssays.filter(essay => 
+        essay.status === 'COMPLETED' || essay.status === 'SUBMITTED'
+      ).length;
+      const essayProgress = totalEssayPrompts > 0 
+        ? Math.round((completedEssays / totalEssayPrompts) * 100) 
+        : 0;
 
+      // Calculate task progress from calendar events
+      const taskEvents = calendarEvents.filter(event => 
+        event.eventType === 'task' || event.eventType === 'deadline'
+      );
+      const completedTasks = taskEvents.filter(event => 
+        event.completionStatus === 'completed'
+      ).length;
+      const totalTasks = taskEvents.length;
+      const taskProgress = totalTasks > 0 
+        ? Math.round((completedTasks / totalTasks) * 100) 
+        : 0;
 
+      // Determine application status based on comprehensive criteria
+      let applicationStatus = 'not-started';
+      let hasAnyActivity = false;
 
-    // Return saved universities with all necessary data
-    const savedUniversities = user?.savedUniversities?.map((university) => ({
-      id: university.id,
-      universityName: university.universityName,
-      slug: university.slug,
-      city: university.city,
-      state: university.state,
-      country: university.country,
-      location: `${university.city}${
-        university.state ? ", " + university.state : ""
-      }, ${university.country}`,
-      images: university.images,
-      image: university.images[0]?.imageUrl || "/default-university.jpg",
-      imageAlt: university.images[0]?.imageAltText || university.universityName,
-      ftGlobalRanking: university.ftGlobalRanking,
-      rank: university.ftGlobalRanking
-        ? `#${university.ftGlobalRanking}`
-        : "N/A",
-      gmatAverageScore: university.gmatAverageScore,
-      gmatAverage: university.gmatAverageScore || "N/A",
-      acceptanceRate: university.acceptanceRate,
-      tuitionFees: university.tuitionFees,
-      additionalFees: university.additionalFees,
-      totalCost: university.totalCost,
-      currency: university.currency || "USD",
-      averageDeadlines: university.averageDeadlines,
-      deadline: university.averageDeadlines
+      // Check if user has started any activity
+      if (allEssays.length > 0 || calendarEvents.length > 0) {
+        hasAnyActivity = true;
+        
+        // Check if everything is completed
+        const allEssaysCompleted = totalEssayPrompts === 0 || completedEssays === totalEssayPrompts;
+        const allTasksCompleted = totalTasks === 0 || completedTasks === totalTasks;
+        
+        if (allEssaysCompleted && allTasksCompleted && (totalEssayPrompts > 0 || totalTasks > 0)) {
+          applicationStatus = 'submitted';
+        } else if (hasAnyActivity) {
+          applicationStatus = 'in-progress';
+        }
+      }
+
+      // Count upcoming deadlines
+      const now = new Date();
+      const upcomingDeadlines = calendarEvents.filter(event => {
+        const eventDate = new Date(event.startDate);
+        return eventDate > now && 
+               (event.eventType === 'deadline' || event.priority === 'high') &&
+               event.completionStatus !== 'completed';
+      }).length;
+
+      // Calculate overall progress (weighted average of essays and tasks)
+      const overallProgress = totalEssayPrompts > 0 && totalTasks > 0 
+        ? Math.round((essayProgress * 0.7) + (taskProgress * 0.3)) // Essays weighted more
+        : totalEssayPrompts > 0 
+        ? essayProgress 
+        : taskProgress;
+
+      // Determine next deadline
+      const nextDeadlineEvent = calendarEvents
+        .filter(event => {
+          const eventDate = new Date(event.startDate);
+          return eventDate > now && event.completionStatus !== 'completed';
+        })
+        .sort((a, b) => new Date(a.startDate) - new Date(b.startDate))[0];
+
+      const nextDeadline = nextDeadlineEvent 
+        ? new Date(nextDeadlineEvent.startDate).toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric'
+          })
+        : university.averageDeadlines 
         ? university.averageDeadlines.split(",")[0]?.trim() || "TBD"
-        : "TBD",
-      shortDescription: university.shortDescription,
-      overview: university.overview,
-      whyChooseHighlights: university.whyChooseHighlights || [],
-      isActive: university.isActive,
-      isFeatured: university.isFeatured,
-      createdAt: university.createdAt,
-      updatedAt: university.updatedAt,
-      isAdded: true, // Since these are saved universities
-    }));
+        : "TBD";
 
+      return {
+        id: university.id,
+        universityName: university.universityName,
+        name: university.universityName, // Alias for frontend compatibility
+        slug: university.slug,
+        city: university.city,
+        state: university.state,
+        country: university.country,
+        location: `${university.city}${
+          university.state ? ", " + university.state : ""
+        }, ${university.country}`,
+        images: university.images,
+        image: university.images[0]?.imageUrl || "/default-university.jpg",
+        imageAlt: university.images[0]?.imageAltText || university.universityName,
+        
+        // Rankings and scores
+        ftGlobalRanking: university.ftGlobalRanking,
+        rank: university.ftGlobalRanking ? `#${university.ftGlobalRanking}` : "N/A",
+        gmatAverageScore: university.gmatAverageScore,
+        gmatAverage: university.gmatAverageScore || "N/A",
+        acceptanceRate: university.acceptanceRate,
+        
+        // Financial information
+        tuitionFees: university.tuitionFees,
+        additionalFees: university.additionalFees,
+        totalCost: university.totalCost,
+        currency: university.currency || "USD",
+        
+        // Progress and status information
+        status: applicationStatus,
+        essayProgress: essayProgress,
+        taskProgress: taskProgress,
+        overallProgress: overallProgress,
+        
+        // Task and deadline information
+        tasks: completedTasks,
+        totalTasks: totalTasks,
+        deadline: nextDeadline,
+        upcomingDeadlines: upcomingDeadlines,
+        
+        // Essay information
+        totalEssays: totalEssayPrompts,
+        completedEssays: completedEssays,
+        
+        // Additional metadata
+        shortDescription: university.shortDescription,
+        overview: university.overview,
+        whyChooseHighlights: university.whyChooseHighlights || [],
+        isActive: university.isActive,
+        isFeatured: university.isFeatured,
+        createdAt: university.createdAt,
+        updatedAt: university.updatedAt,
+        isAdded: true, // Since these are saved universities
+        
+        // Debug information (remove in production)
+        _debug: process.env.NODE_ENV === 'development' ? {
+          totalPrograms: university.programs.length,
+          totalCalendarEvents: calendarEvents.length,
+          essayDetails: allEssays.map(e => ({
+            status: e.status,
+            progress: e.wordCount && e.wordLimit ? (e.wordCount / e.wordLimit) * 100 : 0
+          }))
+        } : undefined
+      };
+    });
 
-    //console.log(savedUniversities,"saved");
-    
+    // Calculate summary statistics
+    const stats = {
+      total: savedUniversities.length,
+      inProgress: savedUniversities.filter(u => u.status === 'in-progress').length,
+      submitted: savedUniversities.filter(u => u.status === 'submitted').length,
+      upcomingDeadlines: savedUniversities.reduce((sum, u) => sum + u.upcomingDeadlines, 0)
+    };
+
     return res.status(200).json({
       count: savedUniversities.length,
-      universities: savedUniversities
+      universities: savedUniversities,
+      stats: stats
     });
+    
   } catch (error) {
     console.error("Error fetching saved universities:", error);
-    return res.status(500).json({ 
+    return res.status(500).json({
       error: "Internal server error",
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
