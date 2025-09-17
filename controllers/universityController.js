@@ -132,14 +132,18 @@ export async function getSavedUniversities(req, res) {
                   where: { userId: userId },
                   select: {
                     id: true,
+                    title: true,
                     status: true,
                     wordCount: true,
                     wordLimit: true,
                     priority: true,
+                    lastModified: true,
                     essayPrompt: {
                       select: {
+                        id: true,
                         promptTitle: true,
-                        isMandatory: true
+                        isMandatory: true,
+                        wordLimit: true
                       }
                     }
                   }
@@ -151,12 +155,13 @@ export async function getSavedUniversities(req, res) {
                     id: true,
                     promptTitle: true,
                     isMandatory: true,
-                    wordLimit: true
+                    wordLimit: true,
+                    minWordCount: true
                   }
                 }
               }
             },
-            // Get calendar events for this university and user
+            // Get ALL calendar events for this university and user
             calendarEvents: {
               where: {
                 userId: userId,
@@ -165,12 +170,20 @@ export async function getSavedUniversities(req, res) {
               select: {
                 id: true,
                 title: true,
+                description: true,
                 eventType: true,
                 eventStatus: true,
                 completionStatus: true,
                 startDate: true,
                 endDate: true,
-                priority: true
+                priority: true,
+                isAllDay: true,
+                completedAt: true,
+                completionNotes: true,
+                createdAt: true
+              },
+              orderBy: {
+                startDate: 'asc'
               }
             }
           }
@@ -181,33 +194,46 @@ export async function getSavedUniversities(req, res) {
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
-
-    // Process saved universities with progress calculation
+console.log('====================================');
+console.log(user);
+console.log('====================================');
+    // Process saved universities with enhanced progress calculation
     const savedUniversities = user?.savedUniversities?.map((university) => {
       // Collect all essays from all programs
       const allEssays = university.programs.flatMap(program => program.essays || []);
       const allEssayPrompts = university.programs.flatMap(program => program.essayPrompts || []);
       
-      // Calendar events for this university
+      // Calendar events for this university - THESE ARE THE TASKS!
       const calendarEvents = university.calendarEvents || [];
       
-      // Calculate essay progress
+      // Calculate essay progress with detailed breakdown
       const totalEssayPrompts = allEssayPrompts.length;
       const completedEssays = allEssays.filter(essay => 
         essay.status === 'COMPLETED' || essay.status === 'SUBMITTED'
       ).length;
+      const inProgressEssays = allEssays.filter(essay => 
+        essay.status === 'IN_PROGRESS'
+      ).length;
+      const draftEssays = allEssays.filter(essay => 
+        essay.status === 'DRAFT'
+      ).length;
+      
       const essayProgress = totalEssayPrompts > 0 
         ? Math.round((completedEssays / totalEssayPrompts) * 100) 
         : 0;
 
-      // Calculate task progress from calendar events
-      const taskEvents = calendarEvents.filter(event => 
-        event.eventType === 'task' || event.eventType === 'deadline'
-      );
-      const completedTasks = taskEvents.filter(event => 
+      // Calculate task progress from calendar events - ALL EVENTS ARE TASKS!
+      const totalTasks = calendarEvents.length; // Every calendar event is a task
+      const completedTasks = calendarEvents.filter(event => 
         event.completionStatus === 'completed'
       ).length;
-      const totalTasks = taskEvents.length;
+      const pendingTasks = calendarEvents.filter(event => 
+        event.completionStatus === 'pending'
+      ).length;
+      const inProgressTasks = calendarEvents.filter(event => 
+        event.completionStatus === 'in_progress'
+      ).length;
+      
       const taskProgress = totalTasks > 0 
         ? Math.round((completedTasks / totalTasks) * 100) 
         : 0;
@@ -231,14 +257,22 @@ export async function getSavedUniversities(req, res) {
         }
       }
 
-      // Count upcoming deadlines
+      // Count upcoming deadlines with more detail
       const now = new Date();
       const upcomingDeadlines = calendarEvents.filter(event => {
         const eventDate = new Date(event.startDate);
         return eventDate > now && 
                (event.eventType === 'deadline' || event.priority === 'high') &&
                event.completionStatus !== 'completed';
-      }).length;
+      });
+
+      // Count overdue events
+      const overdueEvents = calendarEvents.filter(event => {
+        const eventDate = new Date(event.startDate);
+        return eventDate < now && 
+               event.completionStatus === 'pending' &&
+               event.eventStatus === 'active';
+      });
 
       // Calculate overall progress (weighted average of essays and tasks)
       const overallProgress = totalEssayPrompts > 0 && totalTasks > 0 
@@ -265,10 +299,47 @@ export async function getSavedUniversities(req, res) {
         ? university.averageDeadlines.split(",")[0]?.trim() || "TBD"
         : "TBD";
 
+      // Prepare essay details with progress information
+      const essayDetails = allEssays.map(essay => ({
+        id: essay.id,
+        title: essay.title || essay.essayPrompt?.promptTitle || 'Untitled Essay',
+        promptTitle: essay.essayPrompt?.promptTitle,
+        status: essay.status,
+        priority: essay.priority,
+        wordCount: essay.wordCount || 0,
+        wordLimit: essay.wordLimit || essay.essayPrompt?.wordLimit || 0,
+        progressPercentage: essay.wordLimit 
+          ? Math.round((essay.wordCount / essay.wordLimit) * 100)
+          : 0,
+        isMandatory: essay.essayPrompt?.isMandatory || false,
+        lastModified: essay.lastModified,
+        isComplete: essay.status === 'COMPLETED' || essay.status === 'SUBMITTED'
+      }));
+
+      // Prepare calendar events with status information - ALL ARE TASKS
+      const taskDetails = calendarEvents.map(event => ({
+        id: event.id,
+        title: event.title,
+        description: event.description,
+        eventType: event.eventType,
+        eventStatus: event.eventStatus,
+        completionStatus: event.completionStatus,
+        priority: event.priority,
+        startDate: event.startDate,
+        endDate: event.endDate,
+        isAllDay: event.isAllDay,
+        completedAt: event.completedAt,
+        completionNotes: event.completionNotes,
+        isComplete: event.completionStatus === 'completed',
+        isOverdue: new Date(event.startDate) < now && event.completionStatus === 'pending',
+        daysUntilDue: Math.ceil((new Date(event.startDate) - now) / (1000 * 60 * 60 * 24))
+      }));
+
       return {
         id: university.id,
+        // Basic Information (as requested)
+        name: university.universityName,
         universityName: university.universityName,
-        name: university.universityName, // Alias for frontend compatibility
         slug: university.slug,
         city: university.city,
         state: university.state,
@@ -276,11 +347,13 @@ export async function getSavedUniversities(req, res) {
         location: `${university.city}${
           university.state ? ", " + university.state : ""
         }, ${university.country}`,
+        
+        // Images
         images: university.images,
         image: university.images[0]?.imageUrl || "/default-university.jpg",
         imageAlt: university.images[0]?.imageAltText || university.universityName,
         
-        // Rankings and scores
+        // Rankings and scores (as requested)
         ftGlobalRanking: university.ftGlobalRanking,
         rank: university.ftGlobalRanking ? `#${university.ftGlobalRanking}` : "N/A",
         gmatAverageScore: university.gmatAverageScore,
@@ -299,15 +372,81 @@ export async function getSavedUniversities(req, res) {
         taskProgress: taskProgress,
         overallProgress: overallProgress,
         
-        // Task and deadline information
-        tasks: completedTasks,
-        totalTasks: totalTasks,
+        // Task and deadline information - FIXED: Use calendar events as tasks
+        tasks: completedTasks,        // Number of completed tasks
+        totalTasks: totalTasks,       // Total number of tasks (calendar events)
         deadline: nextDeadline,
-        upcomingDeadlines: upcomingDeadlines,
+        upcomingDeadlines: upcomingDeadlines.length,
+        overdueEvents: overdueEvents.length,
         
         // Essay information
         totalEssays: totalEssayPrompts,
         completedEssays: completedEssays,
+        
+        // Calendar Events (which are the tasks)
+        calendarEvents: calendarEvents,
+        
+        // Enhanced Stats (as requested)
+        stats: {
+          // Tasks Statistics - Calendar Events ARE the tasks
+          tasks: {
+            total: totalTasks,
+            completed: completedTasks,
+            pending: pendingTasks,
+            inProgress: inProgressTasks,
+            overdue: overdueEvents.length,
+            upcoming: upcomingDeadlines.length,
+            completionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
+            details: taskDetails // All tasks with their status
+          },
+          
+          // Calendar Events Statistics (same as tasks since events ARE tasks)
+          calendarEvents: {
+            total: calendarEvents.length,
+            completed: completedTasks,
+            pending: pendingTasks,
+            inProgress: inProgressTasks,
+            overdue: overdueEvents.length,
+            upcoming: upcomingDeadlines.length,
+            completionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
+            events: taskDetails // All calendar events with their status
+          },
+          
+          // Essay Statistics
+          essays: {
+            total: totalEssayPrompts,
+            completed: completedEssays,
+            inProgress: inProgressEssays,
+            draft: draftEssays,
+            notStarted: totalEssayPrompts - allEssays.length,
+            completionRate: totalEssayPrompts > 0 ? Math.round((completedEssays / totalEssayPrompts) * 100) : 0,
+            averageProgress: allEssays.length > 0 
+              ? Math.round(allEssays.reduce((sum, essay) => {
+                  const progress = essay.wordLimit 
+                    ? (essay.wordCount / essay.wordLimit) * 100
+                    : 0;
+                  return sum + Math.min(progress, 100);
+                }, 0) / allEssays.length)
+              : 0,
+            essays: essayDetails // All essays with their status and progress
+          },
+          
+          // Overall Application Health
+          applicationHealth: {
+            status: applicationStatus,
+            overallProgress: overallProgress,
+            hasOverdueItems: overdueEvents.length > 0,
+            upcomingDeadlinesCount: upcomingDeadlines.length,
+            nextImportantDate: nextDeadline,
+            lastActivity: allEssays.length > 0 || calendarEvents.length > 0 
+              ? Math.max(
+                  ...allEssays.map(e => new Date(e.lastModified).getTime()),
+                  ...calendarEvents.map(e => new Date(e.createdAt).getTime()),
+                  0
+                )
+              : null
+          }
+        },
         
         // Additional metadata
         shortDescription: university.shortDescription,
@@ -323,31 +462,66 @@ export async function getSavedUniversities(req, res) {
         _debug: process.env.NODE_ENV === 'development' ? {
           totalPrograms: university.programs.length,
           totalCalendarEvents: calendarEvents.length,
-          essayDetails: allEssays.map(e => ({
-            status: e.status,
-            progress: e.wordCount && e.wordLimit ? (e.wordCount / e.wordLimit) * 100 : 0
-          }))
+          calendarEventsAsTasks: {
+            total: totalTasks,
+            completed: completedTasks,
+            pending: pendingTasks,
+            inProgress: inProgressTasks
+          },
+          essayBreakdown: {
+            completed: completedEssays,
+            inProgress: inProgressEssays,
+            draft: draftEssays,
+            notStarted: totalEssayPrompts - allEssays.length
+          },
+          taskBreakdown: {
+            completed: completedTasks,
+            pending: pendingTasks,
+            inProgress: inProgressTasks,
+            overdue: overdueEvents.length
+          }
         } : undefined
       };
     });
 
-    // Calculate summary statistics
+    // Calculate enhanced summary statistics
     const stats = {
       total: savedUniversities.length,
       inProgress: savedUniversities.filter(u => u.status === 'in-progress').length,
       submitted: savedUniversities.filter(u => u.status === 'submitted').length,
-      upcomingDeadlines: savedUniversities.reduce((sum, u) => sum + u.upcomingDeadlines, 0)
+      notStarted: savedUniversities.filter(u => u.status === 'not-started').length,
+      upcomingDeadlines: savedUniversities.reduce((sum, u) => sum + u.upcomingDeadlines, 0),
+      overdueEvents: savedUniversities.reduce((sum, u) => sum + u.overdueEvents, 0),
+      
+      // Aggregated task statistics (from calendar events)
+      totalTasks: savedUniversities.reduce((sum, u) => sum + u.totalTasks, 0),
+      completedTasks: savedUniversities.reduce((sum, u) => sum + u.tasks, 0),
+      
+      // Aggregated essay statistics
+      totalEssays: savedUniversities.reduce((sum, u) => sum + u.totalEssays, 0),
+      completedEssays: savedUniversities.reduce((sum, u) => sum + u.completedEssays, 0),
+      
+      // Average progress across all universities
+      averageProgress: savedUniversities.length > 0
+        ? Math.round(savedUniversities.reduce((sum, u) => sum + u.overallProgress, 0) / savedUniversities.length)
+        : 0,
+      
+      // Universities requiring attention (have overdue items)
+      universitiesNeedingAttention: savedUniversities.filter(u => u.overdueEvents > 0).length
     };
 
     return res.status(200).json({
+      success: true,
       count: savedUniversities.length,
       universities: savedUniversities,
-      stats: stats
+      stats: stats,
+      timestamp: new Date().toISOString()
     });
     
   } catch (error) {
     console.error("Error fetching saved universities:", error);
     return res.status(500).json({
+      success: false,
       error: "Internal server error",
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
