@@ -35,6 +35,7 @@ model User {
   essays                   Essay[]
 
   @@map("users")
+  EssayCompletionLog EssayCompletionLog[]
 }
 
 model UserProfile {
@@ -197,6 +198,21 @@ model UniversityImage {
   @@map("university_images")
 }
 
+// Junction table for many-to-many Program-Department relationship
+model ProgramDepartment {
+  id           String @id @default(cuid())
+  programId    String
+  departmentId String
+  createdAt    DateTime @default(now())
+
+  // Relations
+  program    Program    @relation(fields: [programId], references: [id], onDelete: Cascade)
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  @@unique([programId, departmentId])
+  @@map("program_departments")
+}
+
 model Department {
   id           String   @id @default(cuid())
   universityId String
@@ -206,8 +222,8 @@ model Department {
   updatedAt    DateTime @updatedAt
 
   // Relations
-  university University @relation(fields: [universityId], references: [id], onDelete: Cascade)
-  programs   Program[]
+  university University          @relation(fields: [universityId], references: [id], onDelete: Cascade)
+  programs   ProgramDepartment[] // Changed from direct Program relation
 
   @@unique([universityId, slug])
   @@map("departments")
@@ -216,11 +232,10 @@ model Department {
 model Program {
   id                     String   @id @default(cuid())
   universityId           String
-  departmentId           String
   programName            String
   programSlug            String   @unique
   degreeType             String?
-  programLength          Int? // in years
+  programLength          Int?
   specializations        String?
   programDescription     String?
   curriculumOverview     String?
@@ -236,7 +251,7 @@ model Program {
 
   // Relations
   university        University         @relation(fields: [universityId], references: [id], onDelete: Cascade)
-  department        Department         @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  departments       ProgramDepartment[] // Many-to-many through junction table
   syllabus          Syllabus?
   rankings          ProgramRanking[]
   externalLinks     ExternalLink[]
@@ -992,6 +1007,11 @@ model Essay {
   status           String   @default("DRAFT") // DRAFT, IN_PROGRESS, COMPLETED, SUBMITTED
   priority         String   @default("medium") // high, medium, low
   
+  // NEW: Completion tracking
+  isCompleted      Boolean  @default(false)
+  completedAt      DateTime?
+  completionPercentage Float @default(0.0) // 0-100
+  
   // Metadata
   lastModified     DateTime @default(now())
   createdAt        DateTime @default(now())
@@ -1011,6 +1031,7 @@ model Essay {
 
   @@unique([userId, programId, essayPromptId])
   @@map("essays")
+  EssayCompletionLog EssayCompletionLog[]
 }
 
 model EssayVersion {
@@ -1069,19 +1090,12 @@ model AIResult {
   avgSentenceLength    Float?
   complexWordCount     Int?
   passiveVoiceCount    Int?
-  
-
-// Additional analysis metrics
-
   structureScore       Float?
   contentRelevance     Float?
   narrativeFlow        Float?
   leadershipEmphasis   Float?
   specificityScore     Float?
   grammarIssues        Int?
-
-
-
 
   // Metadata
   createdAt       DateTime @default(now())
@@ -1094,6 +1108,34 @@ model AIResult {
   @@map("ai_results")
   @@index([essayId, analysisType])
   @@index([essayVersionId])
+}
+
+// NEW: Essay completion log table
+model EssayCompletionLog {
+  id          String   @id @default(cuid())
+  essayId     String
+  userId      String?
+  
+  // Completion details
+  completedAt       DateTime @default(now())
+  wordCountAtCompletion Int
+  wordLimit         Int
+  completionMethod  String   // AUTO, MANUAL
+  previousStatus    String?  // Previous status before completion
+  
+  // Context
+  programId         String?
+  universityId      String?
+  essayPromptTitle  String?
+  
+  // Metadata
+  createdAt         DateTime @default(now())
+
+  // Relations
+  essay Essay @relation(fields: [essayId], references: [id], onDelete: Cascade)
+  user  User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("essay_completion_logs")
 }
 
 // ==================== CALENDAR MODELS ====================
