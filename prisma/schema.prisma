@@ -995,7 +995,7 @@ model Essay {
   userId           String?
   applicationId    String?
   programId        String
-  essayPromptId    String
+  essayPromptId    String?
   
   // Essay Content
   title            String
@@ -1012,6 +1012,7 @@ model Essay {
   completedAt      DateTime?
   completionPercentage Float @default(0.0) // 0-100
   
+  
   // Metadata
   lastModified     DateTime @default(now())
   createdAt        DateTime @default(now())
@@ -1025,7 +1026,7 @@ model Essay {
   user            User?           @relation(fields: [userId], references: [id], onDelete: Cascade)
   application     Application?    @relation(fields: [applicationId], references: [id], onDelete: Cascade)
   program         Program         @relation(fields: [programId], references: [id], onDelete: Cascade)
-  essayPrompt     EssayPrompt     @relation(fields: [essayPromptId], references: [id], onDelete: Cascade)
+  essayPrompt     EssayPrompt?     @relation(fields: [essayPromptId], references: [id], onDelete: Cascade)
   versions        EssayVersion[]
   aiResults       AIResult[]
 
