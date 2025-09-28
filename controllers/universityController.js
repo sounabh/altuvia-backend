@@ -1325,7 +1325,7 @@ export async function getUniversityBySlug(req, res) {
           ? `${university.studentsPerYear.toLocaleString()}+`
           : "N/A",
         acceptance: university.acceptanceRate
-          ? `${(university.acceptanceRate * 100).toFixed(1)}%`
+          ? `${(university.acceptanceRate ).toFixed(1)}%`
           : "N/A",
         avgGmat: university.gmatAverageScore || "N/A",
         // Enhanced stats from calculation
