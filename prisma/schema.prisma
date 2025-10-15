@@ -33,9 +33,10 @@ model User {
   calendarEvents           CalendarEvent[]
   eventReminders           EventReminder[]
   essays                   Essay[]
+  EssayCompletionLog       EssayCompletionLog[]
+  CV                       CV[]
 
   @@map("users")
-  EssayCompletionLog EssayCompletionLog[]
 }
 
 model UserProfile {
@@ -173,8 +174,67 @@ model University {
   financialAids     FinancialAid[]
   savedByUsers      User[] @relation("UserSavedUniversities")
   calendarEvents    CalendarEvent[]
+  CV                CV[]
 
   @@map("universities")
+}
+
+model universities_backup {
+  id                         String   @id @default(cuid())
+  universityName             String
+  slug                       String   @unique
+  city                       String
+  state                      String?
+  country                    String
+  fullAddress                String?
+  shortDescription           String?
+  overview                   String?
+  history                    String?
+  missionStatement           String?
+  visionStatement            String?
+  accreditationDetails       String?
+  whyChooseHighlights        String[]
+  careerOutcomes             String?
+  ftGlobalRanking            Int?
+  ftRegionalRanking          Int?
+  ftRankingYear              Int?
+  usNewsRanking              Int?
+  qsRanking                  Int?
+  timesRanking               Int?
+  acceptanceRate             Float?
+  gmatAverageScore           Int?
+  gmatScoreMin               Int?
+  gmatScoreMax               Int?
+  minimumGpa                 Float?
+  languageTestRequirements   String?
+  tuitionFees                Float?
+  additionalFees             Float?
+  totalCost                  Float?
+  currency                   String   @default("USD")
+  scholarshipInfo            String?
+  financialAidDetails        String?
+  admissionsOfficeContact    String?
+  internationalOfficeContact String?
+  generalInquiriesContact    String?
+  websiteUrl                 String?
+  metaTitle                  String?
+  metaDescription            String?
+  metaKeywords               String?
+  canonicalUrl               String?
+  isActive                   Boolean  @default(true)
+  isFeatured                 Boolean  @default(false)
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+
+  // Additional Fields
+  averageDeadlines           String?
+  studentsPerYear            Int?
+  brochureUrl                String?
+  additionalDocumentUrls     String[]
+  averageProgramLengthMonths Int?
+  intakes                    String?
+
+  @@map("universities_backup")
 }
 
 model UniversityImage {
@@ -210,6 +270,8 @@ model ProgramDepartment {
   department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
 
   @@unique([programId, departmentId])
+  @@index([departmentId])
+  @@index([programId])
   @@map("program_departments")
 }
 
@@ -226,6 +288,7 @@ model Department {
   programs   ProgramDepartment[] // Changed from direct Program relation
 
   @@unique([universityId, slug])
+  @@index([universityId])
   @@map("departments")
 }
 
@@ -264,8 +327,33 @@ model Program {
   essayPrompts      EssayPrompt[]
   calendarEvents    CalendarEvent[]
   essays            Essay[]
+  CV                CV[]
 
+  @@index([universityId])
   @@map("programs")
+}
+
+model programs_backup {
+  id                     String   @id @default(cuid())
+  universityId           String
+  programName            String
+  programSlug            String   @unique
+  degreeType             String?
+  programLength          Int?
+  specializations        String?
+  programDescription     String?
+  curriculumOverview     String?
+  admissionRequirements  String?
+  averageEntranceScore   Float?
+  programTuitionFees     Float?
+  programAdditionalFees  Float?
+  programMetaTitle       String?
+  programMetaDescription String?
+  isActive               Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@map("programs_backup")
 }
 
 model Syllabus {
@@ -954,7 +1042,25 @@ model EssayPrompt {
   submissions EssaySubmission[]
   essays      Essay[]
 
+  @@index([programId])
   @@map("essay_prompts")
+}
+
+model essay_prompts_backup {
+  id           String   @id @default(cuid())
+  admissionId  String?
+  programId    String?
+  intakeId     String?
+  promptTitle  String
+  promptText   String
+  wordLimit    Int
+  minWordCount Int      @default(0)
+  isMandatory  Boolean  @default(true)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("essay_prompts_backup")
 }
 
 model EssaySubmission {
@@ -1007,11 +1113,10 @@ model Essay {
   status           String   @default("DRAFT") // DRAFT, IN_PROGRESS, COMPLETED, SUBMITTED
   priority         String   @default("medium") // high, medium, low
   
-  // NEW: Completion tracking
+  // Completion tracking
   isCompleted      Boolean  @default(false)
   completedAt      DateTime?
   completionPercentage Float @default(0.0) // 0-100
-  
   
   // Metadata
   lastModified     DateTime @default(now())
@@ -1029,10 +1134,10 @@ model Essay {
   essayPrompt     EssayPrompt?     @relation(fields: [essayPromptId], references: [id], onDelete: Cascade)
   versions        EssayVersion[]
   aiResults       AIResult[]
+  completionLogs  EssayCompletionLog[]
 
   @@unique([userId, programId, essayPromptId])
   @@map("essays")
-  EssayCompletionLog EssayCompletionLog[]
 }
 
 model EssayVersion {
@@ -1055,8 +1160,8 @@ model EssayVersion {
   essay     Essay      @relation(fields: [essayId], references: [id], onDelete: Cascade)
   aiResults AIResult[]
 
-  @@map("essay_versions")
   @@index([essayId, timestamp])
+  @@map("essay_versions")
 }
 
 model AIResult {
@@ -1106,12 +1211,12 @@ model AIResult {
   essay        Essay         @relation(fields: [essayId], references: [id], onDelete: Cascade)
   essayVersion EssayVersion? @relation(fields: [essayVersionId], references: [id], onDelete: Cascade)
 
-  @@map("ai_results")
   @@index([essayId, analysisType])
   @@index([essayVersionId])
+  @@map("ai_results")
 }
 
-// NEW: Essay completion log table
+// Essay completion log table
 model EssayCompletionLog {
   id          String   @id @default(cuid())
   essayId     String
@@ -1206,8 +1311,8 @@ model CalendarEvent {
   scholarship       Scholarship?       @relation(fields: [scholarshipId], references: [id], onDelete: Cascade)
   reminders         EventReminder[]
 
-  @@map("calendar_events")
   @@index([parentEventId])
+  @@map("calendar_events")
 }
 
 model EventReminder {
@@ -1240,4 +1345,442 @@ model EventReminder {
 
   @@unique([eventId, userId, reminderTime, reminderType])
   @@map("event_reminders")
+}
+
+// ==================== CV BUILDER MODELS ====================
+
+model CV {
+  id        String   @id @default(cuid())
+  userId    String
+  
+  // CV Basic Information
+  title     String   // e.g., "Software Engineering CV - Google"
+  slug      String   @unique
+  
+  // CV Metadata
+  isActive  Boolean  @default(false) // Only one CV can be active at a time
+  isPublic  Boolean  @default(false)
+  
+  // Target Information
+  targetUniversityId String?
+  targetProgramId    String?
+  targetCompany      String? // For job applications
+  targetPosition     String? // For job applications
+  
+  // Template & Styling
+  templateId         String   @default("modern")
+  colorScheme        String   @default("blue")
+  fontSize           Int      @default(11)
+  customCSS          String?
+  
+  // Completion Status
+  completionPercentage Float  @default(0.0)
+  sectionsCompleted    String[] // Array of completed section IDs
+  
+  // ATS Score
+  atsScore             Float?
+  lastATSCheckAt       DateTime?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user                User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  targetUniversity    University?       @relation(fields: [targetUniversityId], references: [id], onDelete: SetNull)
+  targetProgram       Program?          @relation(fields: [targetProgramId], references: [id], onDelete: SetNull)
+  
+  personalInfo        CVPersonalInfo?
+  educations          CVEducation[]
+  experiences         CVExperience[]
+  projects            CVProject[]
+  skills              CVSkill[]
+  achievements        CVAchievement[]
+  volunteers          CVVolunteer[]
+  versions            CVVersion[]
+  aiAnalysis          CVAIAnalysis[]
+  exports             CVExport[]
+
+  @@unique([userId, slug])
+  @@index([userId, isActive])
+  @@map("cvs")
+}
+
+model CVPersonalInfo {
+  id        String   @id @default(cuid())
+  cvId      String   @unique
+  
+  // Basic Information
+  fullName  String
+  email     String
+  phone     String?
+  location  String?
+  
+  // Professional Links
+  website   String?
+  linkedin  String?
+  github    String?
+  portfolio String?
+  
+  // Professional Summary
+  summary   String?
+  headline  String? // Short professional tagline
+  
+  // Profile Image
+  profileImageUrl String?
+  
+  // Display Settings
+  showPhoto       Boolean @default(false)
+  showLocation    Boolean @default(true)
+  showPhone       Boolean @default(true)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  cv CV @relation(fields: [cvId], references: [id], onDelete: Cascade)
+
+  @@map("cv_personal_info")
+}
+
+model CVEducation {
+  id     String @id @default(cuid())
+  cvId   String
+  
+  // Education Details
+  institution     String
+  degree          String  // Bachelor's, Master's, PhD, etc.
+  fieldOfStudy    String
+  location        String?
+  
+  // Dates
+  startDate       DateTime
+  endDate         DateTime?
+  isCurrent       Boolean  @default(false)
+  
+  // Academic Performance
+  gpa             String?
+  gpaScale        String?  // e.g., "4.0", "100"
+  
+  // Additional Information
+  description     String?
+  coursework      String[] // Relevant coursework
+  honors          String[] // Honors and awards
+  
+  // Display Settings
+  showGpa         Boolean  @default(true)
+  displayOrder    Int      @default(0)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  cv CV @relation(fields: [cvId], references: [id], onDelete: Cascade)
+
+  @@index([cvId, displayOrder])
+  @@map("cv_educations")
+}
+
+model CVExperience {
+  id        String   @id @default(cuid())
+  cvId      String
+  
+  // Experience Details
+  company   String
+  position  String
+  location  String?
+  
+  // Dates
+  startDate DateTime
+  endDate   DateTime?
+  isCurrent Boolean  @default(false)
+  
+  // Description
+  description   String?   // Full description
+  achievements  String[]  // Bullet points of achievements
+  
+  // Skills & Technologies
+  skillsUsed    String[]  // Technologies, tools, frameworks
+  
+  // Display Settings
+  displayOrder  Int       @default(0)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  cv CV @relation(fields: [cvId], references: [id], onDelete: Cascade)
+
+  @@index([cvId, displayOrder])
+  @@map("cv_experiences")
+}
+
+model CVProject {
+  id          String   @id @default(cuid())
+  cvId        String
+  
+  // Project Details
+  name        String
+  description String
+  
+  // Technologies
+  technologies String[] // React, Node.js, Python, etc.
+  
+  // Dates
+  startDate   DateTime?
+  endDate     DateTime?
+  
+  // Links
+  githubUrl   String?
+  liveUrl     String?
+  demoUrl     String?
+  
+  // Achievements
+  achievements String[] // Key achievements and impact
+  
+  // Display Settings
+  displayOrder Int      @default(0)
+  isFeatured   Boolean  @default(false)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  cv CV @relation(fields: [cvId], references: [id], onDelete: Cascade)
+
+  @@index([cvId, displayOrder])
+  @@map("cv_projects")
+}
+
+model CVSkill {
+  id           String   @id @default(cuid())
+  cvId         String
+  
+  // Skill Details
+  categoryName String   // Programming Languages, Frameworks, Tools, Soft Skills
+  skills       String[] // Array of skills in this category
+  
+  // Proficiency
+  proficiencyLevel String? // Beginner, Intermediate, Advanced, Expert
+  
+  // Display Settings
+  displayOrder Int      @default(0)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  cv CV @relation(fields: [cvId], references: [id], onDelete: Cascade)
+
+  @@index([cvId, displayOrder])
+  @@map("cv_skills")
+}
+
+model CVAchievement {
+  id            String    @id @default(cuid())
+  cvId          String
+  
+  // Achievement Details
+  title         String
+  organization  String?
+  type          String    // academic, certification, competition, scholarship, publication, etc.
+  date          DateTime?
+  
+  // Description
+  description   String?
+  impact        String?   // Quantified impact or significance
+  
+  // Display Settings
+  displayOrder  Int       @default(0)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  cv CV @relation(fields: [cvId], references: [id], onDelete: Cascade)
+
+  @@index([cvId, displayOrder])
+  @@map("cv_achievements")
+}
+
+model CVVolunteer {
+  id            String    @id @default(cuid())
+  cvId          String
+  
+  // Volunteer Details
+  organization  String
+  role          String?
+  location      String?
+  
+  // Dates
+  startDate     DateTime
+  endDate       DateTime?
+  isCurrent     Boolean   @default(false)
+  
+  // Description
+  description   String?
+  activities    String[]  // Key activities and responsibilities
+  impact        String?   // Measurable impact
+  
+  // Display Settings
+  displayOrder  Int       @default(0)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  cv CV @relation(fields: [cvId], references: [id], onDelete: Cascade)
+
+  @@index([cvId, displayOrder])
+  @@map("cv_volunteers")
+}
+
+model CVVersion {
+  id        String   @id @default(cuid())
+  cvId      String
+  
+  // Version Information
+  versionNumber   Int
+  versionLabel    String   // "Draft 1", "Google Application", "Final Version"
+  
+  // Snapshot Data (JSON snapshots of all CV sections)
+  personalInfoSnapshot   String?
+  educationSnapshot      String?
+  experienceSnapshot     String?
+  projectsSnapshot       String?
+  skillsSnapshot         String?
+  achievementsSnapshot   String?
+  volunteerSnapshot      String?
+  
+  // Version Metadata
+  changeDescription String?
+  isAutoSave        Boolean  @default(false)
+  isBookmarked      Boolean  @default(false)
+  
+  // Template Settings Snapshot
+  templateId        String
+  colorScheme       String
+  
+  createdAt DateTime @default(now())
+  
+  // Relations
+  cv CV @relation(fields: [cvId], references: [id], onDelete: Cascade)
+
+  @@unique([cvId, versionNumber])
+  @@index([cvId, createdAt])
+  @@map("cv_versions")
+}
+
+model CVAIAnalysis {
+  id        String   @id @default(cuid())
+  cvId      String
+  
+  // Analysis Type
+  analysisType    String   // overall, section_specific, ats_check, grammar, content_quality
+  sectionName     String?  // If section-specific analysis
+  
+  // AI Results
+  overallScore    Float?   // 0-100
+  atsScore        Float?
+  
+  // Detailed Feedback (JSON)
+  suggestions     String   // JSON array of suggestions
+  strengths       String?  // JSON array of strengths
+  improvements    String?  // JSON array of improvements
+  warnings        String?  // JSON array of critical issues
+  
+  // Content Metrics
+  wordCount              Int?
+  readabilityScore       Float?
+  keywordMatching        String? // JSON object with keyword analysis
+  sentenceComplexity     Float?
+  actionVerbCount        Int?
+  quantificationCount    Int?   // Number of quantified achievements
+  
+  // ATS Analysis
+  atsKeywords            String? // JSON array of detected keywords
+  atsMissingKeywords     String? // JSON array of missing keywords
+  atsFormattingIssues    String? // JSON array of formatting issues
+  
+  // AI Provider Info
+  aiProvider      String   @default("gemini")
+  modelUsed       String?
+  promptVersion   String?
+  processingTime  Int?     // milliseconds
+  
+  // Status
+  status          String   @default("completed") // processing, completed, failed
+  errorMessage    String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  cv CV @relation(fields: [cvId], references: [id], onDelete: Cascade)
+
+  @@index([cvId, analysisType])
+  @@index([cvId, createdAt])
+  @@map("cv_ai_analysis")
+}
+
+model CVExport {
+  id        String   @id @default(cuid())
+  cvId      String
+  
+  // Export Details
+  exportFormat    String   // pdf, docx, txt, html
+  fileName        String
+  fileUrl         String?
+  fileSize        Int?
+  
+  // Export Settings
+  templateUsed    String
+  colorScheme     String
+  includePhoto    Boolean  @default(false)
+  pageCount       Int?
+  
+  // Download Tracking
+  downloadCount   Int      @default(0)
+  lastDownloadAt  DateTime?
+  
+  // Status
+  status          String   @default("completed") // processing, completed, failed
+  errorMessage    String?
+  
+  createdAt DateTime @default(now())
+  
+  // Relations
+  cv CV @relation(fields: [cvId], references: [id], onDelete: Cascade)
+
+  @@index([cvId, createdAt])
+  @@map("cv_exports")
+}
+
+// CV Template Configuration (for admin/system)
+model CVTemplate {
+  id          String   @id @default(cuid())
+  
+  // Template Information
+  name        String   @unique
+  slug        String   @unique
+  description String?
+  
+  // Template Design
+  thumbnail   String?
+  category    String   // modern, classic, creative, minimal, academic
+  
+  // Template Settings (JSON)
+  defaultStyles      String  // JSON with default font, colors, spacing
+  layoutStructure    String  // JSON with section layout configuration
+  
+  // Availability
+  isPremium   Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  
+  // Usage Stats
+  usageCount  Int      @default(0)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("cv_templates")
 }
