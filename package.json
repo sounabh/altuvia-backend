@@ -16,7 +16,8 @@
     "prisma:sync": "npm run prisma:generate && npm run prisma:push",
     "deploy": "npm run prisma:generate && npm run prisma:deploy && npm start",
     "build": "npm run prisma:generate",
-    "postinstall": "npm run prisma:generate"
+    "postinstall": "chmod +x node_modules/.bin/prisma || true && npx prisma generate"
+
   },
   "dependencies": {
     "@prisma/client": "^6.10.0",

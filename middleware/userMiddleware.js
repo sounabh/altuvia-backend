@@ -12,6 +12,7 @@ export const extractUserIdFromToken = (req, res, next) => {
         error: 'Access token is required',
       });
     }
+//console.log(token);
 
     let decoded;
     try {
