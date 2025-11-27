@@ -5,7 +5,7 @@ generator client {
 datasource db {
   provider     = "postgresql"
   url          = env("DATABASE_URL")
-  directUrl    = env("DIRECT_URL")
+  directUrl         = env("DIRECT_URL")
   relationMode = "prisma"
 }
 
@@ -37,6 +37,7 @@ model User {
   CV                       CV[]
 
   @@map("users")
+  personalityProfiles PersonalityProfile[]
 }
 
 model UserProfile {
@@ -177,6 +178,7 @@ model University {
   CV                CV[]
 
   @@map("universities")
+  schoolMatches SchoolMatch[]
 }
 
 model universities_backup {
@@ -1783,4 +1785,265 @@ model CVTemplate {
   updatedAt DateTime @updatedAt
 
   @@map("cv_templates")
+}
+
+
+
+// ==========================================
+// PRISMA SCHEMA ADDITIONS FOR PERSONALITY TEST
+// Add these models to your existing schema.prisma
+// ==========================================
+
+// ==================== PERSONALITY ASSESSMENT MODELS ====================
+
+model PersonalityProfile {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  
+  // Completion Status
+  isComplete      Boolean  @default(false)
+  completedAt     DateTime?
+  startedAt       DateTime @default(now())
+  lastUpdatedAt   DateTime @default(now())
+  
+  // Module Completion Tracking
+  completedModules String[] // ["leadership", "teamwork", "analytical", ...]
+  totalQuestionsAnswered Int @default(0)
+  
+  // === LEADERSHIP & INITIATIVE ===
+  leadershipScore         Float? // Calculated 0-100
+  leadership_orientation  Int?   // 1-5
+  decision_making_style   Int?
+  proactiveness           Int?
+  delegation_comfort      Int?
+  natural_leadership      Int?
+  
+  // === TEAMWORK & COLLABORATION ===
+  teamworkScore           Float?
+  collaborative_style     Int?
+  mentoring_orientation   Int?
+  extraversion            Int?
+  independence_preference Int?
+  diversity_seeking       Int?
+  
+  // === COMMUNICATION ===
+  communicationScore            Float?
+  public_speaking_comfort       Int?
+  communication_structure_pref  Int?
+  debate_participation          Int?
+  written_vs_verbal             Int?
+  networking_energy             Int?
+  
+  // === ANALYTICAL THINKING ===
+  analyticalScore         Float?
+  data_orientation        Int?
+  analytical_approach     Int?
+  ambiguity_tolerance     Int?
+  systematic_thinking     Int?
+  logic_vs_emotion        Int?
+  
+  // === INNOVATION & CREATIVITY ===
+  innovationScore               Float?
+  risk_tolerance                Int?
+  creativity                    Int?
+  open_problem_solving          Int?
+  traditional_vs_experimental   Int?
+  variety_seeking               Int?
+  
+  // === WORK STYLE ===
+  workStyleScore          Float?
+  pressure_performance    Int?
+  structure_preference    Int?
+  multitasking_ability    Int?
+  time_productivity       Int?
+  work_intensity          Int?
+  
+  // === LEARNING PREFERENCES ===
+  learning_preference     String? // case_method, quantitative, lecture_discussion, experiential
+  competitive_learning    Int?
+  curriculum_flexibility  Int?
+  class_size_preference   Int?
+  peer_learning_value     Int?
+  
+  // === CULTURE & VALUES ===
+  culture_preference            String? // highly_collaborative, competitive, balanced
+  diversity_importance          Int?
+  alumni_network_value          Int?
+  social_impact_orientation     Int?
+  entrepreneurial_culture       Int?
+  
+  // === CAREER GOALS ===
+  career_target                 String? // consulting, finance, tech, entrepreneurship, marketing, operations, general_management, social_impact
+  career_priority               String? // high_salary, work_life_balance, prestige, fast_growth, impact, entrepreneurship
+  professional_motivation       String? // recognition, learning, impact, building, security, leading
+  longterm_vision               String? // senior_management, startup_founder, specialist_expert, social_leader, portfolio_career
+  recruiter_importance          Int?
+  international_opportunities   Int?
+  
+  // === SCHOOL PREFERENCES ===
+  class_size_pref               String? // small, medium, large
+  teaching_style_pref           String? // industry_focused, research_focused, balanced
+  networking_importance         Int?
+  ranking_importance            Int?
+  entrepreneurship_program_val  Int?
+  scholarship_importance        Int?
+  
+  // === LOCATION & LIFESTYLE ===
+  location_preference           String? // big_city, suburban, college_town
+  region_preference             String? // east_coast, west_coast, midwest, south
+  campus_vibe                   String? // quiet_academic, social_vibrant, professional, balanced
+  cold_climate_tolerance        Int?
+  business_hub_proximity        Int?
+  campus_size_preference        Int?
+  
+  // === SCENARIOS & BEHAVIOR ===
+  team_role                     String? // coordinator, analyst, creative, executor, collaborator
+  problem_approach              String? // data, brainstorm, delegate, plan, discuss
+  workload_response             String? // excited, motivated, neutral, stressed_manageable, overwhelmed
+  networking_style              String? // large_events, small_groups, one_on_one, online, not_big
+  feedback_response             String? // eager_improve, defensive_first, seek_clarification, ignore_move_on, demotivated
+  
+  // === PRIORITIES (Ranking) ===
+  academic_rigor_priority       Int? // 1-5 (1=most important)
+  alumni_network_priority       Int?
+  career_opportunities_priority Int?
+  brand_prestige_priority       Int?
+  cost_financial_priority       Int?
+  
+  // === FINANCIAL ===
+  budget_range                  String? // under_60k, 60k_100k, 100k_150k, 150k_plus, scholarship_dependent
+  loan_willingness              Int?
+  roi_focus                     Int?
+  
+  // === COMPETITION & RISK ===
+  application_strategy          String? // balanced, ambitious, safe
+  competition_comfort           Int?
+  competitive_performance       Int?
+  
+  // === RAW DATA STORAGE ===
+  rawAnswersJson                String? // Complete answers as JSON for future analysis
+  assessmentVersion             String  @default("1.0")
+  
+  // === CALCULATED MATCH SCORES ===
+  overallPersonalityScore       Float? // 0-100 overall personality compatibility
+  schoolFitScore                Float? // 0-100 based on preferences
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  answers PersonalityAnswer[]
+  schoolMatches SchoolMatch[]
+
+  @@index([userId])
+  @@index([isComplete])
+  @@map("personality_profiles")
+}
+
+// Individual Answer Records for detailed tracking
+model PersonalityAnswer {
+  id        String   @id @default(cuid())
+  userId    String
+  profileId String
+  
+  // Question Identification
+  moduleId       String   // leadership, teamwork, analytical, etc.
+  questionId     String   // lead_1, team_2, career_goal, etc.
+  trait          String   // leadership_orientation, career_priority, etc.
+  
+  // Answer Data
+  answerValue    String   // "5" for scale, "high_salary" for MCQ, etc.
+  answerType     String   // scale, mcq, rank
+  questionText   String   // Store actual question for reference
+  
+  // Context & Metadata
+  sessionId      String?  // Group answers from same session
+  moduleIndex    Int      // Which module (0-13)
+  questionIndex  Int      // Which question in module
+  answeredAt     DateTime @default(now())
+  
+  // Analytics
+  timeSpentSeconds Int?   // How long user took to answer
+  wasChanged       Boolean @default(false)
+  previousValue    String? // If answer was changed
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  profile PersonalityProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, questionId, profileId])
+  @@index([userId, moduleId])
+  @@index([profileId])
+  @@map("personality_answers")
+}
+
+// School Matching & Recommendations based on Personality
+model SchoolMatch {
+  id        String   @id @default(cuid())
+  userId    String
+  profileId String
+  
+  // School Information
+  universityId   String?
+  schoolName     String
+  programName    String?
+  programType    String? // MBA, Executive MBA, etc.
+  
+  // === MATCH SCORES (0-100) ===
+  overallMatchScore      Float  // Overall fit
+  personalityMatchScore  Float? // Based on personality traits
+  cultureMatchScore      Float? // Culture fit
+  careerMatchScore       Float? // Career goals alignment
+  academicMatchScore     Float? // Academic preferences
+  locationMatchScore     Float? // Location preferences
+  financialMatchScore    Float? // Budget fit
+  
+  // === DETAILED MATCHING FACTORS (JSON) ===
+  matchingFactors      String?  // { leadership_fit: 95, team_culture: 88, ... }
+  strengthsAlignment   String?  // ["Strong leadership program", "Collaborative culture", ...]
+  considerationFactors String?  // ["High cost", "Competitive admission", ...]
+  keyFeatures          String?  // ["Case method", "Strong finance placement", ...]
+  
+  // === RECOMMENDATION DATA ===
+  isRecommended        Boolean  @default(true)
+  recommendationRank   Int?     // 1, 2, 3, ... (lower = better)
+  confidenceScore      Float?   // How confident is the match (0-100)
+  
+  // === SCHOOL CHARACTERISTICS (for matching) ===
+  schoolCulture        String?  // collaborative, competitive, balanced
+  classSize            String?  // small, medium, large
+  locationCity         String?
+  locationRegion       String?
+  avgTuition           Float?
+  placementRate        Float?
+  
+  // === USER INTERACTION ===
+  isViewed             Boolean  @default(false)
+  viewedAt             DateTime?
+  isSaved              Boolean  @default(false)
+  savedAt              DateTime?
+  isApplied            Boolean  @default(false)
+  appliedAt            DateTime?
+  userRating           Int?     // 1-5 stars
+  userFeedback         String?
+  userNotes            String?
+  
+  // === METADATA ===
+  matchGeneratedAt     DateTime @default(now())
+  matchAlgorithmVersion String  @default("1.0")
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  profile      PersonalityProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  university   University?        @relation(fields: [universityId], references: [id], onDelete: SetNull)
+
+  @@index([userId, overallMatchScore])
+  @@index([profileId])
+  @@index([universityId])
+  @@map("school_matches")
 }

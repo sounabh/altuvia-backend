@@ -599,7 +599,7 @@ export async function getUniversityBySlug(req, res) {
     const { slug } = req.params;
     const userId = req.userId; // From authentication middleware (optional)
     
-    console.log('Debug: Request params:', { slug, userId });
+    //console.log('Debug: Request params:', { slug, userId });
     
     if (!slug) {
       return res.status(400).json({ error: "Slug parameter is required" });
@@ -772,12 +772,12 @@ export async function getUniversityBySlug(req, res) {
       },
     });
 
-    console.log('Debug: University found:', !!university);
+  //  console.log('Debug: University found:', !!university);
     if (university) {
-      console.log('Debug: University ID:', university.id);
-      console.log('Debug: Programs count:', university.programs?.length || 0);
-      console.log('Debug: Admissions count:', university.admissions?.length || 0);
-      console.log('Debug: Calendar events count:', university.calendarEvents?.length || 0);
+     //// console.log('Debug: University ID:', university.id);
+      //console.log('Debug: Programs count:', university.programs?.length || 0);
+      //console.log('Debug: Admissions count:', university.admissions?.length || 0);
+      //console.log('Debug: Calendar events count:', university.calendarEvents?.length || 0);
     }
 
     if (!university) {

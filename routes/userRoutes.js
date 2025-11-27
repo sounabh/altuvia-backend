@@ -9,6 +9,7 @@ import {
   fetchUserDetails 
 } from '../controllers/userController.js';
 import { extractUserIdFromToken } from '../middleware/userMiddleware.js';
+import {adminLogin} from "../controllers/adminnauthController.js"
 
 const router = Router();
 
@@ -30,6 +31,10 @@ router.post('/signout', signOut);
 
 // GET /api/user/verify - Verify token
 router.get('/verify', extractUserIdFromToken, verifyAuthToken);
+
+
+//admin login
+  router.post('/admin/login', adminLogin);
 
 // ===================================
 // PROFILE ROUTES - Profile Management
