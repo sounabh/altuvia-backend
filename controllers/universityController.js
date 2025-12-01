@@ -599,8 +599,6 @@ export async function getUniversityBySlug(req, res) {
     const { slug } = req.params;
     const userId = req.userId; // From authentication middleware (optional)
     
-    //console.log('Debug: Request params:', { slug, userId });
-    
     if (!slug) {
       return res.status(400).json({ error: "Slug parameter is required" });
     }
@@ -648,19 +646,24 @@ export async function getUniversityBySlug(req, res) {
               select: {
                 id: true,
                 title: true,
+                content: true,
                 status: true,
                 wordCount: true,
                 wordLimit: true,
                 priority: true,
                 lastModified: true,
                 isCompleted: true,
+                completedAt: true,
                 completionPercentage: true,
+                essayPromptId: true,
                 essayPrompt: {
                   select: {
                     id: true,
                     promptTitle: true,
+                    promptText: true,
                     isMandatory: true,
-                    wordLimit: true
+                    wordLimit: true,
+                    minWordCount: true
                   }
                 }
               }
@@ -740,7 +743,6 @@ export async function getUniversityBySlug(req, res) {
             }
           }
         },
-        // Get ALL calendar events for this university and user
         calendarEvents: userId ? {
           where: {
             userId: userId,
@@ -772,14 +774,6 @@ export async function getUniversityBySlug(req, res) {
       },
     });
 
-  //  console.log('Debug: University found:', !!university);
-    if (university) {
-     //// console.log('Debug: University ID:', university.id);
-      //console.log('Debug: Programs count:', university.programs?.length || 0);
-      //console.log('Debug: Admissions count:', university.admissions?.length || 0);
-      //console.log('Debug: Calendar events count:', university.calendarEvents?.length || 0);
-    }
-
     if (!university) {
       return res.status(404).json({ error: "University not found" });
     }
@@ -790,7 +784,7 @@ export async function getUniversityBySlug(req, res) {
       isAddedByCurrentUser = university.savedByUsers.some(user => user.id === userId);
     }
 
-    // ENHANCED ESSAY AND PROGRESS CALCULATION (same as getSavedUniversities)
+    // ENHANCED ESSAY AND PROGRESS CALCULATION
     let enhancedStats = null;
     let enhancedProgress = {
       essayProgress: 0,
@@ -800,16 +794,67 @@ export async function getUniversityBySlug(req, res) {
     };
 
     if (userId) {
-      // Collect all essays from all programs
-      const allEssays = university.programs.flatMap(program => program.essays || []);
-      const allEssayPrompts = university.programs.flatMap(program => program.essayPrompts || []);
+      // Collect all essays from all programs with their prompts
+      const allEssaysByPrompt = new Map(); // Map to track essays by prompt ID
+      const allEssayPrompts = [];
       
-      // Calendar events for this university - THESE ARE THE TASKS!
+      university.programs.forEach(program => {
+        if (program.essayPrompts && program.essayPrompts.length > 0) {
+          program.essayPrompts.forEach(prompt => {
+            // Find matching essay for this prompt
+            const matchingEssay = program.essays?.find(essay => 
+              essay.essayPromptId === prompt.id
+            );
+            
+            if (matchingEssay) {
+              allEssaysByPrompt.set(prompt.id, {
+                essay: matchingEssay,
+                prompt: prompt,
+                programId: program.id,
+                programName: program.programName
+              });
+            }
+            
+            allEssayPrompts.push({
+              ...prompt,
+              programId: program.id,
+              programName: program.programName
+            });
+          });
+        }
+      });
+      
+      // Calendar events for this university
       const calendarEvents = university.calendarEvents || [];
       
-      // ENHANCED ESSAY COMPLETION LOGIC: 
-      // Check both database status AND calculate completion based on word count
-      const enhancedEssayCompletion = allEssays.map(essay => {
+      // ENHANCED ESSAY COMPLETION LOGIC WITH INDIVIDUAL TRACKING
+      const enhancedEssayCompletion = allEssayPrompts.map(prompt => {
+        const essayData = allEssaysByPrompt.get(prompt.id);
+        
+        if (!essayData) {
+          // No essay started for this prompt
+          return {
+            promptId: prompt.id,
+            promptTitle: prompt.promptTitle,
+            promptText: prompt.promptText,
+            wordLimit: prompt.wordLimit,
+            minWordCount: prompt.minWordCount,
+            isMandatory: prompt.isMandatory,
+            programId: prompt.programId,
+            programName: prompt.programName,
+            status: 'not-started',
+            wordCount: 0,
+            actualCompletionPercentage: 0,
+            isActuallyCompleted: false,
+            completionReason: 'not_started',
+            hasEssay: false,
+            essayId: null,
+            content: '',
+            lastModified: null
+          };
+        }
+        
+        const essay = essayData.essay;
         const wordCountPercentage = essay.wordLimit > 0 
           ? (essay.wordCount / essay.wordLimit) * 100 
           : 0;
@@ -817,22 +862,46 @@ export async function getUniversityBySlug(req, res) {
         // Essay is considered completed if:
         // 1. Database shows it's completed, OR
         // 2. Word count is >= 98% of word limit, OR  
-        // 3. Status is 'SUBMITTED'
+        // 3. Status is 'SUBMITTED' or 'COMPLETED'
         const isActuallyCompleted = 
           essay.isCompleted || 
           essay.status === 'COMPLETED' || 
           essay.status === 'SUBMITTED' || 
           wordCountPercentage >= 98;
         
+        // Determine actual status
+        let actualStatus = essay.status;
+        if (isActuallyCompleted && essay.status !== 'COMPLETED' && essay.status !== 'SUBMITTED') {
+          actualStatus = 'COMPLETED';
+        } else if (essay.wordCount > 0 && essay.wordCount < (essay.wordLimit * 0.98) && essay.status === 'DRAFT') {
+          actualStatus = 'IN_PROGRESS';
+        }
+        
         return {
-          ...essay,
+          promptId: prompt.id,
+          promptTitle: prompt.promptTitle,
+          promptText: prompt.promptText,
+          wordLimit: prompt.wordLimit,
+          minWordCount: prompt.minWordCount,
+          isMandatory: prompt.isMandatory,
+          programId: prompt.programId,
+          programName: prompt.programName,
+          essayId: essay.id,
+          title: essay.title,
+          content: essay.content,
+          status: actualStatus,
+          wordCount: essay.wordCount,
           actualCompletionPercentage: Math.min(wordCountPercentage, 100),
           isActuallyCompleted: isActuallyCompleted,
           completionReason: isActuallyCompleted 
             ? (essay.status === 'COMPLETED' || essay.status === 'SUBMITTED' ? 'status' 
                : wordCountPercentage >= 98 ? 'word_count_98_percent' 
                : 'database_flag') 
-            : 'not_complete'
+            : (essay.wordCount > 0 ? 'in_progress' : 'not_complete'),
+          hasEssay: true,
+          lastModified: essay.lastModified,
+          completedAt: essay.completedAt,
+          priority: essay.priority
         };
       });
 
@@ -842,10 +911,10 @@ export async function getUniversityBySlug(req, res) {
         essay.isActuallyCompleted
       ).length;
       const inProgressEssays = enhancedEssayCompletion.filter(essay => 
-        !essay.isActuallyCompleted && (essay.status === 'IN_PROGRESS' || essay.wordCount > 0)
+        !essay.isActuallyCompleted && essay.completionReason === 'in_progress'
       ).length;
-      const draftEssays = enhancedEssayCompletion.filter(essay => 
-        !essay.isActuallyCompleted && essay.status === 'DRAFT' && essay.wordCount === 0
+      const notStartedEssays = enhancedEssayCompletion.filter(essay => 
+        essay.completionReason === 'not_started'
       ).length;
       
       const essayProgress = totalEssayPrompts > 0 
@@ -868,24 +937,16 @@ export async function getUniversityBySlug(req, res) {
         ? Math.round((completedTasks / totalTasks) * 100) 
         : 0;
 
-      // ENHANCED APPLICATION STATUS LOGIC:
-      // Status should only be 'submitted' when BOTH conditions are met:
-      // 1. ALL essays are completed (using enhanced completion logic)
-      // 2. ALL calendar events/tasks are completed
+      // APPLICATION STATUS LOGIC
       let applicationStatus = 'not-started';
-      let hasAnyActivity = false;
+      let hasAnyActivity = enhancedEssayCompletion.some(e => e.hasEssay) || calendarEvents.length > 0;
 
-      // Check if user has started any activity
-      if (allEssays.length > 0 || calendarEvents.length > 0) {
-        hasAnyActivity = true;
-        
-        // Check if EVERYTHING is completed (strict requirement)
+      if (hasAnyActivity) {
         const allEssaysCompleted = totalEssayPrompts === 0 || 
           (totalEssayPrompts > 0 && completedEssays === totalEssayPrompts);
         const allTasksCompleted = totalTasks === 0 || 
           (totalTasks > 0 && completedTasks === totalTasks);
         
-        // Only mark as submitted if BOTH essays and tasks are 100% complete
         if (allEssaysCompleted && allTasksCompleted && (totalEssayPrompts > 0 || totalTasks > 0)) {
           applicationStatus = 'submitted';
         } else if (hasAnyActivity) {
@@ -893,7 +954,7 @@ export async function getUniversityBySlug(req, res) {
         }
       }
 
-      // Count upcoming deadlines with more detail
+      // Count upcoming deadlines
       const now = new Date();
       const upcomingDeadlines = calendarEvents.filter(event => {
         const eventDate = new Date(event.startDate);
@@ -902,7 +963,6 @@ export async function getUniversityBySlug(req, res) {
                event.completionStatus !== 'completed';
       });
 
-      // Count overdue events
       const overdueEvents = calendarEvents.filter(event => {
         const eventDate = new Date(event.startDate);
         return eventDate < now && 
@@ -910,14 +970,12 @@ export async function getUniversityBySlug(req, res) {
                event.eventStatus === 'active';
       });
 
-      // Calculate overall progress (weighted average of essays and tasks)
       const overallProgress = totalEssayPrompts > 0 && totalTasks > 0 
-        ? Math.round((essayProgress * 0.7) + (taskProgress * 0.3)) // Essays weighted more
+        ? Math.round((essayProgress * 0.7) + (taskProgress * 0.3))
         : totalEssayPrompts > 0 
         ? essayProgress 
         : taskProgress;
 
-      // Determine next deadline
       const nextDeadlineEvent = calendarEvents
         .filter(event => {
           const eventDate = new Date(event.startDate);
@@ -935,25 +993,7 @@ export async function getUniversityBySlug(req, res) {
         ? university.averageDeadlines.split(",")[0]?.trim() || "TBD"
         : "TBD";
 
-      // Prepare essay details with enhanced progress information
-      const essayDetails = enhancedEssayCompletion.map(essay => ({
-        id: essay.id,
-        title: essay.title || essay.essayPrompt?.promptTitle || 'Untitled Essay',
-        promptTitle: essay.essayPrompt?.promptTitle,
-        status: essay.status,
-        priority: essay.priority,
-        wordCount: essay.wordCount || 0,
-        wordLimit: essay.wordLimit || essay.essayPrompt?.wordLimit || 0,
-        progressPercentage: essay.actualCompletionPercentage,
-        isMandatory: essay.essayPrompt?.isMandatory || false,
-        lastModified: essay.lastModified,
-        isComplete: essay.isActuallyCompleted,
-        completionReason: essay.completionReason,
-        // Show as completed in UI if >= 98%
-        displayStatus: essay.isActuallyCompleted ? 'completed' : essay.status
-      }));
-
-      // Prepare calendar events with status information
+      // Prepare task details
       const taskDetails = calendarEvents.map(event => ({
         id: event.id,
         title: event.title,
@@ -976,7 +1016,6 @@ export async function getUniversityBySlug(req, res) {
         daysUntilDue: Math.ceil((new Date(event.startDate) - now) / (1000 * 60 * 60 * 24))
       }));
 
-      // Set enhanced progress data
       enhancedProgress = {
         essayProgress,
         taskProgress,
@@ -987,9 +1026,7 @@ export async function getUniversityBySlug(req, res) {
         overdueEvents: overdueEvents.length
       };
 
-      // Enhanced Stats
       enhancedStats = {
-        // Tasks Statistics
         tasks: {
           total: totalTasks,
           completed: completedTasks,
@@ -1001,7 +1038,6 @@ export async function getUniversityBySlug(req, res) {
           details: taskDetails
         },
         
-        // Calendar Events Statistics
         calendarEvents: {
           total: calendarEvents.length,
           completed: completedTasks,
@@ -1013,20 +1049,18 @@ export async function getUniversityBySlug(req, res) {
           events: taskDetails
         },
         
-        // Essay Statistics - ENHANCED
         essays: {
           total: totalEssayPrompts,
-          completed: completedEssays, // Enhanced completion count
+          completed: completedEssays,
           inProgress: inProgressEssays,
-          draft: draftEssays,
-          notStarted: totalEssayPrompts - allEssays.length,
+          notStarted: notStartedEssays,
           completionRate: totalEssayPrompts > 0 ? Math.round((completedEssays / totalEssayPrompts) * 100) : 0,
           averageProgress: enhancedEssayCompletion.length > 0 
             ? Math.round(enhancedEssayCompletion.reduce((sum, essay) => {
                 return sum + essay.actualCompletionPercentage;
               }, 0) / enhancedEssayCompletion.length)
             : 0,
-          essays: essayDetails, // Enhanced essay details
+          essays: enhancedEssayCompletion,
           enhancedCompletionBreakdown: {
             completedByStatus: enhancedEssayCompletion.filter(e => e.completionReason === 'status').length,
             completedByWordCount98: enhancedEssayCompletion.filter(e => e.completionReason === 'word_count_98_percent').length,
@@ -1034,21 +1068,20 @@ export async function getUniversityBySlug(req, res) {
           }
         },
         
-        // Overall Application Health - ENHANCED
         applicationHealth: {
           status: applicationStatus,
           overallProgress: overallProgress,
           hasOverdueItems: overdueEvents.length > 0,
           upcomingDeadlinesCount: upcomingDeadlines.length,
           nextImportantDate: nextDeadline,
-          isFullyComplete: applicationStatus === 'submitted', // Only true when EVERYTHING is done
+          isFullyComplete: applicationStatus === 'submitted',
           essaysFullyComplete: totalEssayPrompts === 0 || completedEssays === totalEssayPrompts,
           tasksFullyComplete: totalTasks === 0 || completedTasks === totalTasks,
           readyForSubmission: (totalEssayPrompts === 0 || completedEssays === totalEssayPrompts) && 
                              (totalTasks === 0 || completedTasks === totalTasks),
-          lastActivity: allEssays.length > 0 || calendarEvents.length > 0 
+          lastActivity: enhancedEssayCompletion.some(e => e.hasEssay) || calendarEvents.length > 0 
             ? Math.max(
-                ...allEssays.map(e => new Date(e.lastModified).getTime()),
+                ...enhancedEssayCompletion.filter(e => e.hasEssay).map(e => new Date(e.lastModified).getTime()),
                 ...calendarEvents.map(e => new Date(e.createdAt).getTime()),
                 0
               )
@@ -1057,73 +1090,73 @@ export async function getUniversityBySlug(req, res) {
       };
     }
 
-    // Process essay prompts from programs - get ALL essays with enhanced logic
+    // Process essay prompts - USE ENHANCED DATA
     const allEssayPrompts = [];
     let primaryEssay = null;
 
-    university.programs.forEach(program => {
-      console.log(`Processing program: ${program.programName}, Essay prompts: ${program.essayPrompts?.length || 0}`);
-      
-      if (program.essayPrompts && program.essayPrompts.length > 0) {
-        program.essayPrompts.forEach(prompt => {
-          console.log('Processing essay prompt:', {
-            id: prompt.id,
-            title: prompt.promptTitle,
-            programId: program.id,
-            programName: program.programName
-          });
-          
-          // Find matching essay from enhanced stats if available
-          let essayData = {
-            id: prompt.id,
-            title: prompt.promptTitle,
-            text: prompt.promptText,
-            wordLimit: prompt.wordLimit,
-            minWordCount: prompt.minWordCount,
-            isMandatory: prompt.isMandatory,
-            programId: program.id,
-            programName: program.programName,
-            status: "not-started",
-            progress: 0,
-            wordCount: 0,
-            content: "",
-            lastEditedAt: null,
-            submissionDate: null
-          };
+    if (userId && enhancedStats && enhancedStats.essays && enhancedStats.essays.essays) {
+      // Use enhanced essay data with individual progress
+      enhancedStats.essays.essays.forEach((essayData, index) => {
+        const formattedEssay = {
+          id: essayData.promptId,
+          essayId: essayData.essayId,
+          title: essayData.promptTitle,
+          text: essayData.promptText,
+          wordLimit: essayData.wordLimit,
+          minWordCount: essayData.minWordCount,
+          isMandatory: essayData.isMandatory,
+          programId: essayData.programId,
+          programName: essayData.programName,
+          status: essayData.status,
+          progress: essayData.actualCompletionPercentage,
+          wordCount: essayData.wordCount,
+          content: essayData.content || "",
+          lastEditedAt: essayData.lastModified,
+          hasEssay: essayData.hasEssay,
+          isComplete: essayData.isActuallyCompleted,
+          completionReason: essayData.completionReason,
+          completedAt: essayData.completedAt
+        };
+        
+        allEssayPrompts.push(formattedEssay);
+        
+        if (index === 0 && !primaryEssay) {
+          primaryEssay = formattedEssay;
+        }
+      });
+    } else {
+      // Fallback for non-authenticated users
+      university.programs.forEach(program => {
+        if (program.essayPrompts && program.essayPrompts.length > 0) {
+          program.essayPrompts.forEach(prompt => {
+            const essayData = {
+              id: prompt.id,
+              title: prompt.promptTitle,
+              text: prompt.promptText,
+              wordLimit: prompt.wordLimit,
+              minWordCount: prompt.minWordCount,
+              isMandatory: prompt.isMandatory,
+              programId: program.id,
+              programName: program.programName,
+              status: "not-started",
+              progress: 0,
+              wordCount: 0,
+              content: "",
+              lastEditedAt: null,
+              hasEssay: false
+            };
 
-          // If user is authenticated and we have enhanced stats, get the enhanced essay data
-          if (userId && enhancedStats && enhancedStats.essays && enhancedStats.essays.essays) {
-            const enhancedEssay = enhancedStats.essays.essays.find(e => 
-              e.essayPrompt && e.essayPrompt.id === prompt.id
-            );
+            allEssayPrompts.push(essayData);
             
-            if (enhancedEssay) {
-              essayData = {
-                ...essayData,
-                status: enhancedEssay.displayStatus || enhancedEssay.status,
-                progress: enhancedEssay.progressPercentage || 0,
-                wordCount: enhancedEssay.wordCount || 0,
-                lastEditedAt: enhancedEssay.lastModified,
-                isComplete: enhancedEssay.isComplete,
-                completionReason: enhancedEssay.completionReason
-              };
+            if (!primaryEssay) {
+              primaryEssay = essayData;
             }
-          }
+          });
+        }
+      });
+    }
 
-          allEssayPrompts.push(essayData);
-          
-          if (!primaryEssay) {
-            primaryEssay = essayData;
-          }
-        });
-      }
-    });
-
-    console.log('Debug: Total essay prompts found:', allEssayPrompts.length);
-    console.log('Debug: Primary essay:', primaryEssay?.title || 'None');
-    console.log('Debug: Enhanced stats available:', !!enhancedStats);
-
-    // Process deadlines from all admissions
+    // Process deadlines and calendar events (keep existing logic)
     const deadlines = [];
     university.admissions.forEach(admission => {
       if (admission.deadlines && admission.deadlines.length > 0) {
@@ -1151,7 +1184,6 @@ export async function getUniversityBySlug(req, res) {
       }
     });
 
-    // Process calendar events with enhanced transformation
     let transformedCalendarEvents = [];
     if (userId && university.calendarEvents) {
       transformedCalendarEvents = university.calendarEvents.map(event => {
@@ -1184,7 +1216,6 @@ export async function getUniversityBySlug(req, res) {
           isAllDay: event.isAllDay,
           timezone: event.timezone,
           isSystemGenerated: event.isSystemGenerated,
-          // Enhanced fields
           school: university.universityName || 'General',
           universityId: university.id,
           universitySlug: university.slug,
@@ -1197,14 +1228,9 @@ export async function getUniversityBySlug(req, res) {
       });
     }
 
-    // Combine deadlines and events, sort by date
     const tasksAndEvents = [...deadlines, ...transformedCalendarEvents].sort((a, b) => 
       new Date(a.date) - new Date(b.date)
     );
-
-    console.log('Debug: Final tasksAndEvents count:', tasksAndEvents.length);
-    console.log('Debug: Deadlines count:', deadlines.length);
-    console.log('Debug: Calendar events count:', transformedCalendarEvents.length);
 
     const formattedUniversity = {
       id: university.id,
@@ -1217,7 +1243,6 @@ export async function getUniversityBySlug(req, res) {
       country: university.country,
       fullAddress: university.fullAddress,
 
-      // Images
       images: university.images.map((img) => ({
         url: img.imageUrl,
         alt: img.imageAltText || university.universityName,
@@ -1239,26 +1264,21 @@ export async function getUniversityBySlug(req, res) {
         ? university.averageDeadlines.split(",")[0]?.trim() || "TBD"
         : "TBD"),
 
-      // Descriptions
       description: university.shortDescription,
       shortDescription: university.shortDescription,
       overview: university.overview,
       biography: university.overview,
       history: university.history,
 
-      // Mission & Vision
       missionStatement: university.missionStatement,
       visionStatement: university.visionStatement,
 
-      // Highlights
       whyChooseHighlights: university.whyChooseHighlights || [],
 
-      // Basic info
       rating: 4.9,
       websiteUrl: university.websiteUrl,
       brochureUrl: university.brochureUrl,
 
-      // Academic info
       programs: university.programs.map((p) => ({
         id: p.id,
         name: p.programName,
@@ -1275,14 +1295,12 @@ export async function getUniversityBySlug(req, res) {
       })),
       accreditationDetails: university.accreditationDetails,
 
-      // Rankings
       ftGlobalRanking: university.ftGlobalRanking,
       ftRegionalRanking: university.ftRegionalRanking,
       usNewsRanking: university.usNewsRanking,
       qsRanking: university.qsRanking,
       timesRanking: university.timesRanking,
 
-      // Academic requirements
       acceptanceRate: university.acceptanceRate,
       gmatAverageScore: university.gmatAverageScore,
       gmatScoreMin: university.gmatScoreMin,
@@ -1290,7 +1308,6 @@ export async function getUniversityBySlug(req, res) {
       minimumGpa: university.minimumGpa,
       languageTestRequirements: university.languageTestRequirements,
 
-      // Financial
       tuitionFees: university.tuitionFees,
       additionalFees: university.additionalFees,
       totalCost: university.totalCost,
@@ -1298,28 +1315,22 @@ export async function getUniversityBySlug(req, res) {
       scholarshipInfo: university.scholarshipInfo,
       financialAidDetails: university.financialAidDetails,
 
-      // Program details
       averageDeadlines: university.averageDeadlines,
       studentsPerYear: university.studentsPerYear,
       averageProgramLengthMonths: university.averageProgramLengthMonths,
       intakes: university.intakes,
 
-      // Contacts
       admissionsOfficeContact: university.admissionsOfficeContact,
       internationalOfficeContact: university.internationalOfficeContact,
       generalInquiriesContact: university.generalInquiriesContact,
 
-      // Career outcomes
       careerOutcomes: university.careerOutcomes,
 
-      // Additional docs
       additionalDocumentUrls: university.additionalDocumentUrls || [],
 
-      // Flags
       isActive: university.isActive,
       isFeatured: university.isFeatured,
 
-      // Stats - Enhanced with progress data
       stats: {
         students: university.studentsPerYear
           ? `${university.studentsPerYear.toLocaleString()}+`
@@ -1328,11 +1339,9 @@ export async function getUniversityBySlug(req, res) {
           ? `${(university.acceptanceRate ).toFixed(1)}%`
           : "N/A",
         avgGmat: university.gmatAverageScore || "N/A",
-        // Enhanced stats from calculation
         ...(enhancedStats || {})
       },
 
-      // ENHANCED PROGRESS INFORMATION
       status: enhancedProgress.applicationStatus,
       essayProgress: enhancedProgress.essayProgress,
       taskProgress: enhancedProgress.taskProgress,
@@ -1342,13 +1351,11 @@ export async function getUniversityBySlug(req, res) {
 
       savedByUsers: university.savedByUsers,
 
-      // Relational
       tuitionBreakdowns: university.tuitionBreakdowns,
       scholarships: university.scholarships,
       feeStructures: university.feeStructures,
       financialAids: university.financialAids,
 
-      // Application workspace data - Enhanced
       allEssayPrompts: allEssayPrompts,
       primaryEssay: primaryEssay,
       essayPrompts: primaryEssay ? [primaryEssay] : [],
@@ -1357,64 +1364,11 @@ export async function getUniversityBySlug(req, res) {
       deadlines: deadlines,
       admissions: university.admissions,
 
-      // Enhanced Statistics (only if user is authenticated)
       enhancedStats: userId ? enhancedStats : null,
 
-      // Timestamps
       createdAt: university.createdAt,
-      updatedAt: university.updatedAt,
-
-      // Debug information
-      _debug: process.env.NODE_ENV === 'development' && userId ? {
-        userId: userId,
-        isAuthenticated: !!userId,
-        enhancedCalculationsApplied: true,
-        totalPrograms: university.programs.length,
-        totalCalendarEvents: university.calendarEvents?.length || 0,
-        enhancedCompletionLogic: enhancedStats ? {
-          essaysWithEnhancedCompletion: enhancedStats.essays.essays.map(e => ({
-            id: e.id,
-            title: e.title,
-            wordCount: e.wordCount,
-            wordLimit: e.wordLimit,
-            percentage: e.progressPercentage,
-            isComplete: e.isComplete,
-            reason: e.completionReason
-          })),
-          applicationStatusCalculation: {
-            allEssaysCompleted: enhancedStats.essays.total === 0 || enhancedStats.essays.completed === enhancedStats.essays.total,
-            allTasksCompleted: enhancedStats.tasks.total === 0 || enhancedStats.tasks.completed === enhancedStats.tasks.total,
-            finalStatus: enhancedProgress.applicationStatus
-          }
-        } : null,
-        essayBreakdown: enhancedStats ? {
-          completed: enhancedStats.essays.completed,
-          inProgress: enhancedStats.essays.inProgress,
-          draft: enhancedStats.essays.draft,
-          notStarted: enhancedStats.essays.notStarted
-        } : null,
-        taskBreakdown: enhancedStats ? {
-          completed: enhancedStats.tasks.completed,
-          pending: enhancedStats.tasks.pending,
-          inProgress: enhancedStats.tasks.inProgress,
-          overdue: enhancedStats.tasks.overdue
-        } : null
-      } : undefined
+      updatedAt: university.updatedAt
     };
-
-    console.log('Debug: Response summary:', {
-      universityId: formattedUniversity.id,
-      universityName: formattedUniversity.name,
-      allEssayPromptsCount: formattedUniversity.allEssayPrompts.length,
-      primaryEssay: formattedUniversity.primaryEssay?.title || 'None',
-      tasksAndEventsCount: formattedUniversity.tasksAndEvents.length,
-      calendarEventsCount: formattedUniversity.calendarEvents.length,
-      deadlinesCount: formattedUniversity.deadlines.length,
-      admissionsCount: formattedUniversity.admissions.length,
-      enhancedStatsAvailable: !!formattedUniversity.enhancedStats,
-      applicationStatus: formattedUniversity.status,
-      overallProgress: formattedUniversity.overallProgress
-    });
 
     return res.status(200).json(formattedUniversity);
   } catch (error) {
@@ -1425,6 +1379,7 @@ export async function getUniversityBySlug(req, res) {
     });
   }
 }
+
 
 
 
