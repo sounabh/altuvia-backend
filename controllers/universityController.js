@@ -111,6 +111,15 @@ export async function getSavedUniversities(req, res) {
       return res.status(401).json({ error: "User is not authenticated" });
     }
 
+    // **NEW: Fetch user's study level preference**
+    let userStudyLevel = null;
+    const userProfile = await prisma.userProfile.findUnique({
+      where: { userId: userId },
+      select: { studyLevel: true },
+    });
+    userStudyLevel = userProfile?.studyLevel?.toLowerCase();
+    console.log("User's Study Level:", userStudyLevel);
+
     // Fetch user with saved universities and all related data
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -128,6 +137,16 @@ export async function getSavedUniversities(req, res) {
               }
             },
             programs: {
+              // **NEW: Filter programs by user's study level**
+              where: {
+                isActive: true,
+                ...(userStudyLevel && {
+                  degreeType: {
+                    equals: userStudyLevel,
+                    mode: "insensitive",
+                  },
+                }),
+              },
               include: {
                 // Get essays for this user and program
                 essays: {
@@ -201,7 +220,7 @@ export async function getSavedUniversities(req, res) {
 
     // Process saved universities with enhanced completion logic
     const savedUniversities = user?.savedUniversities?.map((university) => {
-      // Collect all essays from all programs
+      // Collect all essays from all programs (now filtered by study level)
       const allEssays = university.programs.flatMap(program => program.essays || []);
       const allEssayPrompts = university.programs.flatMap(program => program.essayPrompts || []);
       
@@ -417,7 +436,7 @@ export async function getSavedUniversities(req, res) {
         upcomingDeadlines: upcomingDeadlines.length,
         overdueEvents: overdueEvents.length,
         
-        // Essay information - ENHANCED
+        // Essay information - ENHANCED (now filtered by study level)
         totalEssays: totalEssayPrompts,
         completedEssays: completedEssays, // Now uses enhanced completion logic
         
@@ -450,7 +469,7 @@ export async function getSavedUniversities(req, res) {
             events: taskDetails
           },
           
-          // Essay Statistics - ENHANCED
+          // Essay Statistics - ENHANCED (filtered by study level)
           essays: {
             total: totalEssayPrompts,
             completed: completedEssays, // Enhanced completion count
@@ -468,7 +487,9 @@ export async function getSavedUniversities(req, res) {
               completedByStatus: enhancedEssayCompletion.filter(e => e.completionReason === 'status').length,
               completedByWordCount98: enhancedEssayCompletion.filter(e => e.completionReason === 'word_count_98_percent').length,
               completedByDatabaseFlag: enhancedEssayCompletion.filter(e => e.completionReason === 'database_flag').length
-            }
+            },
+            // **NEW: Include study level filter info**
+            filteredByStudyLevel: userStudyLevel || null
           },
           
           // Overall Application Health - ENHANCED
@@ -503,10 +524,14 @@ export async function getSavedUniversities(req, res) {
         updatedAt: university.updatedAt,
         isAdded: true,
         
+        // **NEW: Include user's study level in response**
+        userStudyLevel: userStudyLevel,
+        
         // Debug information
         _debug: process.env.NODE_ENV === 'development' ? {
           totalPrograms: university.programs.length,
           totalCalendarEvents: calendarEvents.length,
+          userStudyLevel: userStudyLevel,
           enhancedCompletionLogic: {
             essaysWithEnhancedCompletion: enhancedEssayCompletion.map(e => ({
               id: e.id,
@@ -552,7 +577,7 @@ export async function getSavedUniversities(req, res) {
       totalTasks: savedUniversities.reduce((sum, u) => sum + u.totalTasks, 0),
       completedTasks: savedUniversities.reduce((sum, u) => sum + u.tasks, 0),
       
-      // Aggregated essay statistics - ENHANCED
+      // Aggregated essay statistics - ENHANCED (filtered by study level)
       totalEssays: savedUniversities.reduce((sum, u) => sum + u.totalEssays, 0),
       completedEssays: savedUniversities.reduce((sum, u) => sum + u.completedEssays, 0), // Enhanced completion
       
@@ -568,7 +593,10 @@ export async function getSavedUniversities(req, res) {
       fullyCompletedUniversities: savedUniversities.filter(u => u.status === 'submitted').length,
       universitiesReadyForSubmission: savedUniversities.filter(u => 
         u.stats?.applicationHealth?.readyForSubmission
-      ).length
+      ).length,
+      
+      // **NEW: Include study level filter info**
+      filteredByStudyLevel: userStudyLevel || null
     };
 
     return res.status(200).json({
@@ -577,10 +605,12 @@ export async function getSavedUniversities(req, res) {
       universities: savedUniversities,
       stats: stats,
       timestamp: new Date().toISOString(),
+      userStudyLevel: userStudyLevel,
       enhancedFeatures: {
         essayCompletionAt98Percent: true,
         strictSubmissionRequirements: true,
-        enhancedProgressTracking: true
+        enhancedProgressTracking: true,
+        filteredByStudyLevel: !!userStudyLevel
       }
     });
     
@@ -603,6 +633,17 @@ export async function getUniversityBySlug(req, res) {
       return res.status(400).json({ error: "Slug parameter is required" });
     }
 
+    // **NEW: Fetch user's study level preference if user is authenticated**
+    let userStudyLevel = null;
+    if (userId) {
+      const userProfile = await prisma.userProfile.findUnique({
+        where: { userId: userId },
+        select: { studyLevel: true },
+      });
+      userStudyLevel = userProfile?.studyLevel?.toLowerCase();
+      console.log("User's Study Level:", userStudyLevel);
+    }
+
     const university = await prisma.university.findUnique({
       where: { 
         slug,
@@ -623,7 +664,16 @@ export async function getUniversityBySlug(req, res) {
           }
         },
         programs: {
-          where: { isActive: true },
+          where: { 
+            isActive: true,
+            // **NEW: Filter programs by user's study level if available**
+            ...(userStudyLevel && {
+              degreeType: {
+                equals: userStudyLevel,
+                mode: "insensitive",
+              },
+            }),
+          },
           orderBy: { programName: "asc" },
           include: {
             essayPrompts: {
@@ -794,7 +844,7 @@ export async function getUniversityBySlug(req, res) {
     };
 
     if (userId) {
-      // Collect all essays from all programs with their prompts
+      // Collect all essays from all programs with their prompts (now filtered by study level)
       const allEssaysByPrompt = new Map(); // Map to track essays by prompt ID
       const allEssayPrompts = [];
       
@@ -905,7 +955,7 @@ export async function getUniversityBySlug(req, res) {
         };
       });
 
-      // Calculate essay progress with enhanced completion logic
+      // Calculate essay progress with enhanced completion logic (now filtered by study level)
       const totalEssayPrompts = allEssayPrompts.length;
       const completedEssays = enhancedEssayCompletion.filter(essay => 
         essay.isActuallyCompleted
@@ -1065,7 +1115,9 @@ export async function getUniversityBySlug(req, res) {
             completedByStatus: enhancedEssayCompletion.filter(e => e.completionReason === 'status').length,
             completedByWordCount98: enhancedEssayCompletion.filter(e => e.completionReason === 'word_count_98_percent').length,
             completedByDatabaseFlag: enhancedEssayCompletion.filter(e => e.completionReason === 'database_flag').length
-          }
+          },
+          // **NEW: Include study level filter info**
+          filteredByStudyLevel: userStudyLevel || null
         },
         
         applicationHealth: {
@@ -1090,7 +1142,7 @@ export async function getUniversityBySlug(req, res) {
       };
     }
 
-    // Process essay prompts - USE ENHANCED DATA
+    // Process essay prompts - USE ENHANCED DATA (now filtered by study level)
     const allEssayPrompts = [];
     let primaryEssay = null;
 
@@ -1125,7 +1177,7 @@ export async function getUniversityBySlug(req, res) {
         }
       });
     } else {
-      // Fallback for non-authenticated users
+      // Fallback for non-authenticated users (programs already filtered by study level in query)
       university.programs.forEach(program => {
         if (program.essayPrompts && program.essayPrompts.length > 0) {
           program.essayPrompts.forEach(prompt => {
@@ -1279,6 +1331,7 @@ export async function getUniversityBySlug(req, res) {
       websiteUrl: university.websiteUrl,
       brochureUrl: university.brochureUrl,
 
+      // **Programs now filtered by study level**
       programs: university.programs.map((p) => ({
         id: p.id,
         name: p.programName,
@@ -1356,6 +1409,7 @@ export async function getUniversityBySlug(req, res) {
       feeStructures: university.feeStructures,
       financialAids: university.financialAids,
 
+      // **Essay prompts now filtered by study level**
       allEssayPrompts: allEssayPrompts,
       primaryEssay: primaryEssay,
       essayPrompts: primaryEssay ? [primaryEssay] : [],
@@ -1365,6 +1419,9 @@ export async function getUniversityBySlug(req, res) {
       admissions: university.admissions,
 
       enhancedStats: userId ? enhancedStats : null,
+
+      // **NEW: Include user's study level in response**
+      userStudyLevel: userStudyLevel,
 
       createdAt: university.createdAt,
       updatedAt: university.updatedAt
@@ -1379,7 +1436,6 @@ export async function getUniversityBySlug(req, res) {
     });
   }
 }
-
 
 
 
