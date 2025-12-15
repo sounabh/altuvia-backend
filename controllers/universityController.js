@@ -1,5 +1,6 @@
 import prisma from "../lib/prisma.js";
 
+
 export async function toggleAdded(req, res) {
   try {
     const userId = req.userId;
@@ -111,14 +112,53 @@ export async function getSavedUniversities(req, res) {
       return res.status(401).json({ error: "User is not authenticated" });
     }
 
-    // **NEW: Fetch user's study level preference**
+    // **FETCH USER'S STUDY LEVEL PREFERENCE AND FULL PROFILE DATA**
     let userStudyLevel = null;
     const userProfile = await prisma.userProfile.findUnique({
       where: { userId: userId },
-      select: { studyLevel: true },
+      select: { 
+        studyLevel: true,
+        gpa: true,
+        testScores: true,
+        workExperience: true,
+        countries: true,
+        courses: true
+      },
     });
     userStudyLevel = userProfile?.studyLevel?.toLowerCase();
     console.log("User's Study Level:", userStudyLevel);
+
+    // Parse test scores from user profile
+    let testScores = {
+      hasGMAT: false,
+      hasGRE: false,
+      hasIELTS: false,
+      hasTOEFL: false,
+      gmatScore: null,
+      greScore: null,
+      ieltsScore: null,
+      toeflScore: null
+    };
+
+    if (userProfile?.testScores) {
+      try {
+        const scores = typeof userProfile.testScores === 'string' 
+          ? JSON.parse(userProfile.testScores) 
+          : userProfile.testScores;
+        testScores = {
+          hasGMAT: !!scores.gmat && scores.gmat > 0,
+          hasGRE: !!scores.gre && scores.gre > 0,
+          hasIELTS: !!scores.ielts && scores.ielts > 0,
+          hasTOEFL: !!scores.toefl && scores.toefl > 0,
+          gmatScore: scores.gmat || null,
+          greScore: scores.gre || null,
+          ieltsScore: scores.ielts || null,
+          toeflScore: scores.toefl || null
+        };
+      } catch (e) {
+        console.error("Error parsing test scores:", e);
+      }
+    }
 
     // Fetch user with saved universities and all related data
     const user = await prisma.user.findUnique({
@@ -137,7 +177,7 @@ export async function getSavedUniversities(req, res) {
               }
             },
             programs: {
-              // **NEW: Filter programs by user's study level**
+              // **Filter programs by user's study level**
               where: {
                 isActive: true,
                 ...(userStudyLevel && {
@@ -154,6 +194,7 @@ export async function getSavedUniversities(req, res) {
                   select: {
                     id: true,
                     title: true,
+                    content: true,
                     status: true,
                     wordCount: true,
                     wordLimit: true,
@@ -161,12 +202,16 @@ export async function getSavedUniversities(req, res) {
                     lastModified: true,
                     isCompleted: true,
                     completionPercentage: true,
+                    createdAt: true,
+                    essayPromptId: true, // ✅ ADDED: Include essayPromptId for matching
                     essayPrompt: {
                       select: {
                         id: true,
                         promptTitle: true,
+                        promptText: true,
                         isMandatory: true,
-                        wordLimit: true
+                        wordLimit: true,
+                        minWordCount: true
                       }
                     }
                   }
@@ -177,9 +222,66 @@ export async function getSavedUniversities(req, res) {
                   select: {
                     id: true,
                     promptTitle: true,
+                    promptText: true,
                     isMandatory: true,
                     wordLimit: true,
                     minWordCount: true
+                  }
+                },
+                // **Get admission requirements**
+                admissions: {
+                  where: { isActive: true },
+                  select: {
+                    id: true,
+                    minimumGpa: true,
+                    maximumGpa: true,
+                    gmatMinScore: true,
+                    gmatMaxScore: true,
+                    gmatAverageScore: true,
+                    greMinScore: true,
+                    greMaxScore: true,
+                    greAverageScore: true,
+                    ieltsMinScore: true,
+                    toeflMinScore: true,
+                    pteMinScore: true,
+                    workExperienceRequired: true,
+                    minWorkExperience: true,
+                    maxWorkExperience: true,
+                    acceptanceRate: true,
+                    applicationFee: true,
+                    currency: true,
+                    deadlines: {
+                      where: { isActive: true },
+                      orderBy: { deadlineDate: 'asc' },
+                      select: {
+                        id: true,
+                        deadlineType: true,
+                        deadlineDate: true,
+                        deadlineTime: true,
+                        timezone: true,
+                        title: true,
+                        description: true,
+                        priority: true,
+                        isExtended: true
+                      }
+                    },
+                    intakes: {
+                      where: { isActive: true },
+                      orderBy: { intakeYear: 'desc' },
+                      select: {
+                        id: true,
+                        intakeName: true,
+                        intakeType: true,
+                        intakeYear: true,
+                        intakeMonth: true,
+                        startDate: true,
+                        endDate: true,
+                        applicationOpenDate: true,
+                        applicationCloseDate: true,
+                        totalSeats: true,
+                        availableSeats: true
+                      }
+                    }
                   }
                 }
               }
@@ -223,6 +325,8 @@ export async function getSavedUniversities(req, res) {
       // Collect all essays from all programs (now filtered by study level)
       const allEssays = university.programs.flatMap(program => program.essays || []);
       const allEssayPrompts = university.programs.flatMap(program => program.essayPrompts || []);
+      const allAdmissions = university.programs.flatMap(program => program.admissions || []);
+      const allDeadlines = allAdmissions.flatMap(adm => adm.deadlines || []);
       
       // Calendar events for this university - THESE ARE THE TASKS!
       const calendarEvents = university.calendarEvents || [];
@@ -256,7 +360,7 @@ export async function getSavedUniversities(req, res) {
         };
       });
 
-      // Calculate essay progress with enhanced completion logic
+      // ✅ FIXED: Calculate essay progress using allEssayPrompts as the total
       const totalEssayPrompts = allEssayPrompts.length;
       const completedEssays = enhancedEssayCompletion.filter(essay => 
         essay.isActuallyCompleted
@@ -267,6 +371,8 @@ export async function getSavedUniversities(req, res) {
       const draftEssays = enhancedEssayCompletion.filter(essay => 
         !essay.isActuallyCompleted && essay.status === 'DRAFT' && essay.wordCount === 0
       ).length;
+      // ✅ FIXED: Calculate not started essays (prompts without any user essay)
+      const notStartedEssays = totalEssayPrompts - allEssays.length;
       
       const essayProgress = totalEssayPrompts > 0 
         ? Math.round((completedEssays / totalEssayPrompts) * 100) 
@@ -337,6 +443,34 @@ export async function getSavedUniversities(req, res) {
         ? essayProgress 
         : taskProgress;
 
+      // **Combine all deadlines (from admissions + calendar events) - PRIORITIZE USER EVENTS FIRST**
+      const userCalendarDeadlines = calendarEvents
+        .filter(e => e.eventType === 'deadline' && new Date(e.startDate) > now)
+        .map(e => ({
+          id: e.id,
+          type: e.eventType,
+          date: e.startDate,
+          title: e.title,
+          description: e.description,
+          priority: e.priority,
+          source: 'user_calendar'
+        }));
+
+      const dbDeadlines = allDeadlines
+        .filter(d => new Date(d.deadlineDate) > now)
+        .map(d => ({
+          id: d.id,
+          type: d.deadlineType,
+          date: d.deadlineDate,
+          title: d.title,
+          description: d.description,
+          priority: d.priority,
+          source: 'database'
+        }));
+
+      const allDeadlinesCombined = [...userCalendarDeadlines, ...dbDeadlines]
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+
       // Determine next deadline
       const nextDeadlineEvent = calendarEvents
         .filter(event => {
@@ -351,27 +485,63 @@ export async function getSavedUniversities(req, res) {
             day: 'numeric',
             year: 'numeric'
           })
+        : allDeadlinesCombined[0]
+        ? new Date(allDeadlinesCombined[0].date).toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric'
+          })
         : university.averageDeadlines 
         ? university.averageDeadlines.split(",")[0]?.trim() || "TBD"
         : "TBD";
 
-      // Prepare essay details with enhanced progress information
-      const essayDetails = enhancedEssayCompletion.map(essay => ({
-        id: essay.id,
-        title: essay.title || essay.essayPrompt?.promptTitle || 'Untitled Essay',
-        promptTitle: essay.essayPrompt?.promptTitle,
-        status: essay.status,
-        priority: essay.priority,
-        wordCount: essay.wordCount || 0,
-        wordLimit: essay.wordLimit || essay.essayPrompt?.wordLimit || 0,
-        progressPercentage: essay.actualCompletionPercentage,
-        isMandatory: essay.essayPrompt?.isMandatory || false,
-        lastModified: essay.lastModified,
-        isComplete: essay.isActuallyCompleted,
-        completionReason: essay.completionReason,
-        // Show as completed in UI if >= 98%
-        displayStatus: essay.isActuallyCompleted ? 'completed' : essay.status
-      }));
+      // ✅ FIXED: Prepare essay details with ALL essay prompts (including not started)
+      const essayDetails = allEssayPrompts.map(prompt => {
+        const matchingEssay = enhancedEssayCompletion.find(
+          essay => essay.essayPromptId === prompt.id || essay.essayPrompt?.id === prompt.id
+        );
+        
+        if (matchingEssay) {
+          return {
+            id: matchingEssay.id,
+            promptId: prompt.id,
+            title: matchingEssay.title || prompt.promptTitle || 'Untitled Essay',
+            promptTitle: prompt.promptTitle,
+            promptText: prompt.promptText,
+            status: matchingEssay.status,
+            priority: matchingEssay.priority,
+            wordCount: matchingEssay.wordCount || 0,
+            wordLimit: matchingEssay.wordLimit || prompt.wordLimit || 0,
+            progressPercentage: matchingEssay.actualCompletionPercentage,
+            isMandatory: prompt.isMandatory || false,
+            lastModified: matchingEssay.lastModified,
+            isComplete: matchingEssay.isActuallyCompleted,
+            completionReason: matchingEssay.completionReason,
+            displayStatus: matchingEssay.isActuallyCompleted ? 'completed' : matchingEssay.status,
+            hasUserEssay: true
+          };
+        } else {
+          // No user essay for this prompt - NOT STARTED
+          return {
+            id: null,
+            promptId: prompt.id,
+            title: prompt.promptTitle || 'Untitled Essay',
+            promptTitle: prompt.promptTitle,
+            promptText: prompt.promptText,
+            status: 'NOT_STARTED',
+            priority: prompt.isMandatory ? 'high' : 'medium',
+            wordCount: 0,
+            wordLimit: prompt.wordLimit || 0,
+            progressPercentage: 0,
+            isMandatory: prompt.isMandatory || false,
+            lastModified: null,
+            isComplete: false,
+            completionReason: 'not_started',
+            displayStatus: 'not_started',
+            hasUserEssay: false
+          };
+        }
+      });
 
       // Prepare calendar events with status information
       const taskDetails = calendarEvents.map(event => ({
@@ -391,6 +561,15 @@ export async function getSavedUniversities(req, res) {
         isOverdue: new Date(event.startDate) < now && event.completionStatus === 'pending',
         daysUntilDue: Math.ceil((new Date(event.startDate) - now) / (1000 * 60 * 60 * 24))
       }));
+
+      // **Test score requirements vs user scores**
+      const requiresGMAT = allAdmissions.some(a => a.gmatMinScore > 0);
+      const requiresGRE = allAdmissions.some(a => a.greMinScore > 0);
+      const requiresIELTS = allAdmissions.some(a => a.ieltsMinScore > 0);
+      const requiresTOEFL = allAdmissions.some(a => a.toeflMinScore > 0);
+
+      // ✅ FIXED: Get acceptance rate from admissions or university level
+      const acceptanceRate = allAdmissions[0]?.acceptanceRate || university.acceptanceRate || null;
 
       return {
         id: university.id,
@@ -415,7 +594,7 @@ export async function getSavedUniversities(req, res) {
         rank: university.ftGlobalRanking ? `#${university.ftGlobalRanking}` : "N/A",
         gmatAverageScore: university.gmatAverageScore,
         gmatAverage: university.gmatAverageScore || "N/A",
-        acceptanceRate: university.acceptanceRate,
+        acceptanceRate: acceptanceRate, // ✅ FIXED: Use the calculated acceptance rate
         
         // Financial information
         tuitionFees: university.tuitionFees,
@@ -436,12 +615,48 @@ export async function getSavedUniversities(req, res) {
         upcomingDeadlines: upcomingDeadlines.length,
         overdueEvents: overdueEvents.length,
         
-        // Essay information - ENHANCED (now filtered by study level)
+        // ✅ FIXED: Essay information with proper counts
         totalEssays: totalEssayPrompts,
-        completedEssays: completedEssays, // Now uses enhanced completion logic
+        completedEssays: completedEssays,
+        inProgressEssays: inProgressEssays,
+        notStartedEssays: notStartedEssays,
         
         // Calendar Events
         calendarEvents: calendarEvents,
+        
+        // **Programs data for AI timeline**
+        programs: university.programs.map(p => ({
+          id: p.id,
+          programName: p.programName,
+          programSlug: p.programSlug,
+          degreeType: p.degreeType,
+          programLength: p.programLength,
+          specializations: p.specializations,
+          programDescription: p.programDescription,
+          admissions: p.admissions,
+          essays: p.essays,
+          essayPrompts: p.essayPrompts
+        })),
+        
+        // **Deadlines from admissions + calendar (USER EVENTS PRIORITIZED)**
+        deadlines: allDeadlinesCombined.slice(0, 5),
+        
+        // **Admission requirements**
+        admissionRequirements: allAdmissions[0] || null,
+        
+        // **Test score requirements vs user scores**
+        requiresGMAT: requiresGMAT,
+        requiresGRE: requiresGRE,
+        requiresIELTS: requiresIELTS,
+        requiresTOEFL: requiresTOEFL,
+        
+        userHasGMAT: testScores.hasGMAT,
+        userHasGRE: testScores.hasGRE,
+        userHasIELTS: testScores.hasIELTS,
+        userHasTOEFL: testScores.hasTOEFL,
+        
+        // ✅ ADDED: Include user's actual test scores for timeline
+        userTestScores: testScores,
         
         // Enhanced Stats
         stats: {
@@ -469,26 +684,26 @@ export async function getSavedUniversities(req, res) {
             events: taskDetails
           },
           
-          // Essay Statistics - ENHANCED (filtered by study level)
+          // ✅ FIXED: Essay Statistics with proper counts
           essays: {
             total: totalEssayPrompts,
-            completed: completedEssays, // Enhanced completion count
+            completed: completedEssays,
             inProgress: inProgressEssays,
             draft: draftEssays,
-            notStarted: totalEssayPrompts - allEssays.length,
+            notStarted: notStartedEssays,
             completionRate: totalEssayPrompts > 0 ? Math.round((completedEssays / totalEssayPrompts) * 100) : 0,
-            averageProgress: enhancedEssayCompletion.length > 0 
-              ? Math.round(enhancedEssayCompletion.reduce((sum, essay) => {
-                  return sum + essay.actualCompletionPercentage;
-                }, 0) / enhancedEssayCompletion.length)
+            averageProgress: essayDetails.length > 0 
+              ? Math.round(essayDetails.reduce((sum, essay) => {
+                  return sum + essay.progressPercentage;
+                }, 0) / essayDetails.length)
               : 0,
-            essays: essayDetails, // Enhanced essay details
+            essays: essayDetails, // ✅ Now includes ALL essay prompts
             enhancedCompletionBreakdown: {
               completedByStatus: enhancedEssayCompletion.filter(e => e.completionReason === 'status').length,
               completedByWordCount98: enhancedEssayCompletion.filter(e => e.completionReason === 'word_count_98_percent').length,
-              completedByDatabaseFlag: enhancedEssayCompletion.filter(e => e.completionReason === 'database_flag').length
+              completedByDatabaseFlag: enhancedEssayCompletion.filter(e => e.completionReason === 'database_flag').length,
+              notStarted: notStartedEssays
             },
-            // **NEW: Include study level filter info**
             filteredByStudyLevel: userStudyLevel || null
           },
           
@@ -499,7 +714,7 @@ export async function getSavedUniversities(req, res) {
             hasOverdueItems: overdueEvents.length > 0,
             upcomingDeadlinesCount: upcomingDeadlines.length,
             nextImportantDate: nextDeadline,
-            isFullyComplete: applicationStatus === 'submitted', // Only true when EVERYTHING is done
+            isFullyComplete: applicationStatus === 'submitted',
             essaysFullyComplete: totalEssayPrompts === 0 || completedEssays === totalEssayPrompts,
             tasksFullyComplete: totalTasks === 0 || completedTasks === totalTasks,
             readyForSubmission: (totalEssayPrompts === 0 || completedEssays === totalEssayPrompts) && 
@@ -518,13 +733,16 @@ export async function getSavedUniversities(req, res) {
         shortDescription: university.shortDescription,
         overview: university.overview,
         whyChooseHighlights: university.whyChooseHighlights || [],
+        averageDeadlines: university.averageDeadlines,
+        intakes: university.intakes,
+        websiteUrl: university.websiteUrl,
         isActive: university.isActive,
         isFeatured: university.isFeatured,
         createdAt: university.createdAt,
         updatedAt: university.updatedAt,
         isAdded: true,
         
-        // **NEW: Include user's study level in response**
+        // **Include user's study level in response**
         userStudyLevel: userStudyLevel,
         
         // Debug information
@@ -532,6 +750,8 @@ export async function getSavedUniversities(req, res) {
           totalPrograms: university.programs.length,
           totalCalendarEvents: calendarEvents.length,
           userStudyLevel: userStudyLevel,
+          totalEssayPrompts: totalEssayPrompts,
+          userEssaysCount: allEssays.length,
           enhancedCompletionLogic: {
             essaysWithEnhancedCompletion: enhancedEssayCompletion.map(e => ({
               id: e.id,
@@ -552,7 +772,7 @@ export async function getSavedUniversities(req, res) {
             completed: completedEssays,
             inProgress: inProgressEssays,
             draft: draftEssays,
-            notStarted: totalEssayPrompts - allEssays.length
+            notStarted: notStartedEssays
           },
           taskBreakdown: {
             completed: completedTasks,
@@ -568,7 +788,7 @@ export async function getSavedUniversities(req, res) {
     const stats = {
       total: savedUniversities.length,
       inProgress: savedUniversities.filter(u => u.status === 'in-progress').length,
-      submitted: savedUniversities.filter(u => u.status === 'submitted').length, // Only when EVERYTHING is complete
+      submitted: savedUniversities.filter(u => u.status === 'submitted').length,
       notStarted: savedUniversities.filter(u => u.status === 'not-started').length,
       upcomingDeadlines: savedUniversities.reduce((sum, u) => sum + u.upcomingDeadlines, 0),
       overdueEvents: savedUniversities.reduce((sum, u) => sum + u.overdueEvents, 0),
@@ -577,9 +797,11 @@ export async function getSavedUniversities(req, res) {
       totalTasks: savedUniversities.reduce((sum, u) => sum + u.totalTasks, 0),
       completedTasks: savedUniversities.reduce((sum, u) => sum + u.tasks, 0),
       
-      // Aggregated essay statistics - ENHANCED (filtered by study level)
+      // ✅ FIXED: Aggregated essay statistics
       totalEssays: savedUniversities.reduce((sum, u) => sum + u.totalEssays, 0),
-      completedEssays: savedUniversities.reduce((sum, u) => sum + u.completedEssays, 0), // Enhanced completion
+      completedEssays: savedUniversities.reduce((sum, u) => sum + u.completedEssays, 0),
+      inProgressEssays: savedUniversities.reduce((sum, u) => sum + u.inProgressEssays, 0),
+      notStartedEssays: savedUniversities.reduce((sum, u) => sum + u.notStartedEssays, 0),
       
       // Average progress across all universities
       averageProgress: savedUniversities.length > 0
@@ -595,7 +817,6 @@ export async function getSavedUniversities(req, res) {
         u.stats?.applicationHealth?.readyForSubmission
       ).length,
       
-      // **NEW: Include study level filter info**
       filteredByStudyLevel: userStudyLevel || null
     };
 
@@ -604,13 +825,20 @@ export async function getSavedUniversities(req, res) {
       count: savedUniversities.length,
       universities: savedUniversities,
       stats: stats,
+      userProfile: {
+        studyLevel: userStudyLevel,
+        gpa: userProfile?.gpa,
+        testScores: testScores,
+        workExperience: userProfile?.workExperience
+      },
       timestamp: new Date().toISOString(),
       userStudyLevel: userStudyLevel,
       enhancedFeatures: {
         essayCompletionAt98Percent: true,
         strictSubmissionRequirements: true,
         enhancedProgressTracking: true,
-        filteredByStudyLevel: !!userStudyLevel
+        filteredByStudyLevel: !!userStudyLevel,
+        includesAllEssayPrompts: true // ✅ NEW: Flag indicating all prompts are included
       }
     });
     
@@ -623,6 +851,7 @@ export async function getSavedUniversities(req, res) {
     });
   }
 }
+
 
 export async function getUniversityBySlug(req, res) {
   try {

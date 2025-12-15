@@ -38,6 +38,7 @@ model User {
 
   @@map("users")
   personalityProfiles PersonalityProfile[]
+  aitimelines AITimeline[]
 }
 
 model UserProfile {
@@ -179,6 +180,7 @@ model University {
 
   @@map("universities")
   schoolMatches SchoolMatch[]
+  aitimelines AITimeline[]
 }
 
 model universities_backup {
@@ -333,6 +335,7 @@ model Program {
 
   @@index([universityId])
   @@map("programs")
+  aitimelines AITimeline[]
 }
 
 model programs_backup {
@@ -1140,6 +1143,7 @@ model Essay {
 
   @@unique([userId, programId, essayPromptId])
   @@map("essays")
+  timelineTasks TimelineTask[]
 }
 
 model EssayVersion {
@@ -1315,6 +1319,7 @@ model CalendarEvent {
 
   @@index([parentEventId])
   @@map("calendar_events")
+  timelineTasks TimelineTask[]
 }
 
 model EventReminder {
@@ -2046,4 +2051,180 @@ model SchoolMatch {
   @@index([profileId])
   @@index([universityId])
   @@map("school_matches")
+}
+
+
+
+// ==================== AI TIMELINE MODELS ====================
+
+model AITimeline {
+  id           String   @id @default(cuid())
+  userId       String
+  universityId String
+  programId    String?
+  
+  // Timeline Metadata
+  timelineName     String   // "MIT MBA Application Timeline"
+  generatedAt      DateTime @default(now())
+  lastRegeneratedAt DateTime @default(now())
+  
+  // User Context Snapshot (for regeneration logic)
+  userProfileSnapshot  String? // JSON snapshot of user profile at generation time
+  universitySnapshot   String? // JSON snapshot of university data
+  
+  // Timeline Status
+  isActive         Boolean  @default(true)
+  completionStatus String   @default("in_progress") // not_started, in_progress, completed
+  overallProgress  Float    @default(0.0) // 0-100
+  
+  // Timeline Configuration
+  startDate        DateTime?
+  targetDeadline   DateTime?
+  totalDuration    String?  // "4-6 months"
+  totalPhases      Int      @default(0)
+  totalTasks       Int      @default(0)
+  
+  // AI Generation Info
+  aiModel          String   @default("gemini-2.5-flash-lite")
+  promptVersion    String   @default("1.0")
+  generationTime   Int?     // milliseconds
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  university   University  @relation(fields: [universityId], references: [id], onDelete: Cascade)
+  program      Program?    @relation(fields: [programId], references: [id], onDelete: SetNull)
+  phases       TimelinePhase[]
+  tasks        TimelineTask[]
+
+  @@unique([userId, universityId, programId])
+  @@index([userId, isActive])
+  @@index([universityId])
+  @@map("ai_timelines")
+}
+
+model TimelinePhase {
+  id           String   @id @default(cuid())
+  timelineId   String
+  
+  // Phase Information
+  phaseNumber  Int      // 1, 2, 3, 4, 5
+  phaseName    String   // "Research & Planning"
+  description  String?  // Full description paragraph
+  
+  // Timeline Information
+  duration     String   // "2-4 weeks"
+  timeframe    String   // "4-5 months before deadline"
+  startDate    DateTime?
+  endDate      DateTime?
+  
+  // Status
+  status       String   @default("upcoming") // upcoming, in_progress, completed, skipped
+  completionPercentage Float @default(0.0)
+  
+  // Content
+  overview           String?  // Detailed overview paragraph
+  objectives         String[] // Array of key objectives
+  milestones         String[] // Array of milestones
+  proTips            String[] // Array of pro tips
+  commonMistakes     String[] // Array of common mistakes
+  resources          String[] // Array of helpful resources
+  
+  // Completion Tracking
+  startedAt    DateTime?
+  completedAt  DateTime?
+  
+  // Display
+  displayOrder Int      @default(0)
+  isVisible    Boolean  @default(true)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  timeline AITimeline     @relation(fields: [timelineId], references: [id], onDelete: Cascade)
+  tasks    TimelineTask[]
+
+  @@unique([timelineId, phaseNumber])
+  @@index([timelineId, displayOrder])
+  @@map("timeline_phases")
+}
+
+model TimelineTask {
+  id           String   @id @default(cuid())
+  timelineId   String
+  phaseId      String
+  
+  // Task Information
+  taskNumber   Int      // Task number within phase
+  title        String
+  description  String   // Detailed task description
+  
+  // Timeline
+  estimatedTime    String   // "2-3 days", "1 week"
+  suggestedDueDate DateTime?
+  actualDueDate    DateTime?
+  
+  // Priority & Category
+  priority     String   @default("medium") // high, medium, low, critical
+  category     String   // essay, test, document, research, application
+  
+  // Status
+  status       String   @default("pending") // pending, in_progress, completed, skipped, blocked
+  isCompleted  Boolean  @default(false)
+  completedAt  DateTime?
+  
+  // Task Dependencies
+  dependsOn        String[] // Array of task IDs that must be completed first
+  blockedBy        String[] // Array of task IDs blocking this task
+  isBlocked        Boolean  @default(false)
+  
+  // Content & Guidance
+  detailedGuide    String?  // Comprehensive guide paragraph
+  actionSteps      String[] // Step-by-step actions
+  tips             String[] // Specific tips for this task
+  resources        String[] // Links, tools, references
+  commonPitfalls   String[] // Things to avoid
+  successCriteria  String[] // How to know you've done it right
+  
+  // Contextual Information
+  requiresGMAT     Boolean  @default(false)
+  requiresGRE      Boolean  @default(false)
+  requiresIELTS    Boolean  @default(false)
+  requiresTOEFL    Boolean  @default(false)
+  isUniversitySpecific Boolean @default(false)
+  isProgramSpecific    Boolean @default(false)
+  
+  // Related Entities (for context)
+  relatedEssayId       String? // Link to Essay model
+  relatedEventId       String? // Link to CalendarEvent model
+  relatedDocumentType  String? // Type of document needed
+  
+  // User Interaction
+  notes            String?  // User's personal notes
+  userRating       Int?     // 1-5: How helpful was this task?
+  timeTaken        Int?     // Minutes user actually spent
+  difficultyRating Int?     // 1-5: How difficult was it?
+  
+  // Display
+  displayOrder Int      @default(0)
+  isVisible    Boolean  @default(true)
+  isOptional   Boolean  @default(false)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  timeline AITimeline     @relation(fields: [timelineId], references: [id], onDelete: Cascade)
+  phase    TimelinePhase  @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  essay    Essay?         @relation(fields: [relatedEssayId], references: [id], onDelete: SetNull)
+  event    CalendarEvent? @relation(fields: [relatedEventId], references: [id], onDelete: SetNull)
+
+  @@unique([timelineId, phaseId, taskNumber])
+  @@index([timelineId, status])
+  @@index([phaseId, displayOrder])
+  @@index([isCompleted])
+  @@map("timeline_tasks")
 }
