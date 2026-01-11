@@ -128,37 +128,68 @@ export async function getSavedUniversities(req, res) {
     userStudyLevel = userProfile?.studyLevel?.toLowerCase();
     console.log("User's Study Level:", userStudyLevel);
 
-    // Parse test scores from user profile
-    let testScores = {
-      hasGMAT: false,
-      hasGRE: false,
-      hasIELTS: false,
-      hasTOEFL: false,
-      gmatScore: null,
-      greScore: null,
-      ieltsScore: null,
-      toeflScore: null
-    };
+ // Parse test scores from user profile
+let testScores = {
+  hasGMAT: false,
+  hasGRE: false,
+  hasIELTS: false,
+  hasTOEFL: false,
+  gmatScore: null,
+  greScore: null,
+  ieltsScore: null,
+  toeflScore: null
+};
 
-    if (userProfile?.testScores) {
-      try {
-        const scores = typeof userProfile.testScores === 'string' 
-          ? JSON.parse(userProfile.testScores) 
-          : userProfile.testScores;
-        testScores = {
-          hasGMAT: !!scores.gmat && scores.gmat > 0,
-          hasGRE: !!scores.gre && scores.gre > 0,
-          hasIELTS: !!scores.ielts && scores.ielts > 0,
-          hasTOEFL: !!scores.toefl && scores.toefl > 0,
-          gmatScore: scores.gmat || null,
-          greScore: scores.gre || null,
-          ieltsScore: scores.ielts || null,
-          toeflScore: scores.toefl || null
-        };
-      } catch (e) {
-        console.error("Error parsing test scores:", e);
+if (userProfile?.testScores) {
+  try {
+    let scores = {};
+    
+    if (typeof userProfile.testScores === 'string') {
+      const testScoresStr = userProfile.testScores.trim();
+      
+      // Check if it looks like JSON (starts with { or [)
+      if (testScoresStr.startsWith('{') || testScoresStr.startsWith('[')) {
+        try {
+          scores = JSON.parse(testScoresStr);
+        } catch (jsonError) {
+          console.error("Invalid JSON format for test scores:", jsonError);
+        }
+      } else {
+        // Handle plain string format like "GMAT:789" or "GMAT:789,GRE:320,IELTS:7.5"
+        const parts = testScoresStr.split(',');
+        parts.forEach(part => {
+          const [key, value] = part.split(':').map(s => s.trim());
+          if (key && value) {
+            const normalizedKey = key.toLowerCase();
+            const numValue = parseFloat(value);
+            if (!isNaN(numValue)) {
+              scores[normalizedKey] = numValue;
+            }
+          }
+        });
       }
+    } else if (typeof userProfile.testScores === 'object' && userProfile.testScores !== null) {
+      // Already an object
+      scores = userProfile.testScores;
     }
+    
+    // Map to standardized format
+    testScores = {
+      hasGMAT: !!scores.gmat && scores.gmat > 0,
+      hasGRE: !!scores.gre && scores.gre > 0,
+      hasIELTS: !!scores.ielts && scores.ielts > 0,
+      hasTOEFL: !!scores.toefl && scores.toefl > 0,
+      gmatScore: scores.gmat || null,
+      greScore: scores.gre || null,
+      ieltsScore: scores.ielts || null,
+      toeflScore: scores.toefl || null
+    };
+  } catch (e) {
+    console.error("Error parsing test scores:", e);
+    console.error("Test scores value:", userProfile.testScores);
+    // testScores remains with default null values
+  }
+}
 
     // Fetch user with saved universities and all related data
     const user = await prisma.user.findUnique({
