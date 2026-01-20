@@ -106,743 +106,550 @@ export async function toggleAdded(req, res) {
 
 export async function getSavedUniversities(req, res) {
   try {
-    const userId = req.userId; // From authentication middleware
+    const userId = req.userId;
     
     if (!userId) {
       return res.status(401).json({ error: "User is not authenticated" });
     }
 
-    // **FETCH USER'S STUDY LEVEL PREFERENCE AND FULL PROFILE DATA**
-    let userStudyLevel = null;
-    const userProfile = await prisma.userProfile.findUnique({
-      where: { userId: userId },
-      select: { 
-        studyLevel: true,
-        gpa: true,
-        testScores: true,
-        workExperience: true,
-        countries: true,
-        courses: true
-      },
-    });
-    userStudyLevel = userProfile?.studyLevel?.toLowerCase();
-    console.log("User's Study Level:", userStudyLevel);
-
- // Parse test scores from user profile
-let testScores = {
-  hasGMAT: false,
-  hasGRE: false,
-  hasIELTS: false,
-  hasTOEFL: false,
-  gmatScore: null,
-  greScore: null,
-  ieltsScore: null,
-  toeflScore: null
-};
-
-if (userProfile?.testScores) {
-  try {
-    let scores = {};
-    
-    if (typeof userProfile.testScores === 'string') {
-      const testScoresStr = userProfile.testScores.trim();
+    // **OPTIMIZATION #1: Parallel data fetching for maximum speed**
+    const [userProfile, user, activeCV, activeTimeline] = await Promise.all([
+      // Fetch user profile
+      prisma.userProfile.findUnique({
+        where: { userId },
+        select: { 
+          studyLevel: true,
+          gpa: true,
+          testScores: true,
+          workExperience: true,
+          countries: true,
+          courses: true
+        },
+      }),
       
-      // Check if it looks like JSON (starts with { or [)
-      if (testScoresStr.startsWith('{') || testScoresStr.startsWith('[')) {
-        try {
-          scores = JSON.parse(testScoresStr);
-        } catch (jsonError) {
-          console.error("Invalid JSON format for test scores:", jsonError);
-        }
-      } else {
-        // Handle plain string format like "GMAT:789" or "GMAT:789,GRE:320,IELTS:7.5"
-        const parts = testScoresStr.split(',');
-        parts.forEach(part => {
-          const [key, value] = part.split(':').map(s => s.trim());
-          if (key && value) {
-            const normalizedKey = key.toLowerCase();
-            const numValue = parseFloat(value);
-            if (!isNaN(numValue)) {
-              scores[normalizedKey] = numValue;
-            }
-          }
-        });
-      }
-    } else if (typeof userProfile.testScores === 'object' && userProfile.testScores !== null) {
-      // Already an object
-      scores = userProfile.testScores;
-    }
-    
-    // Map to standardized format
-    testScores = {
-      hasGMAT: !!scores.gmat && scores.gmat > 0,
-      hasGRE: !!scores.gre && scores.gre > 0,
-      hasIELTS: !!scores.ielts && scores.ielts > 0,
-      hasTOEFL: !!scores.toefl && scores.toefl > 0,
-      gmatScore: scores.gmat || null,
-      greScore: scores.gre || null,
-      ieltsScore: scores.ielts || null,
-      toeflScore: scores.toefl || null
-    };
-  } catch (e) {
-    console.error("Error parsing test scores:", e);
-    console.error("Test scores value:", userProfile.testScores);
-    // testScores remains with default null values
-  }
-}
-
-    // Fetch user with saved universities and all related data
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      include: {
-        savedUniversities: {
-          where: { isActive: true },
-          include: {
-            images: {
-              where: { isPrimary: true },
-              take: 1,
-              select: {
-                imageUrl: true,
-                imageAltText: true,
-                imageTitle: true
-              }
-            },
-            programs: {
-              // **Filter programs by user's study level**
-              where: {
-                isActive: true,
-                ...(userStudyLevel && {
-                  degreeType: {
-                    equals: userStudyLevel,
-                    mode: "insensitive",
-                  },
-                }),
+      // Fetch user with optimized university relations
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          savedUniversities: {
+            where: { isActive: true },
+            select: {
+              // Basic university info
+              id: true,
+              universityName: true,
+              slug: true,
+              city: true,
+              state: true,
+              country: true,
+              shortDescription: true,
+              overview: true,
+              whyChooseHighlights: true,
+              ftGlobalRanking: true,
+              gmatAverageScore: true,
+              acceptanceRate: true,
+              tuitionFees: true,
+              additionalFees: true,
+              totalCost: true,
+              currency: true,
+              averageDeadlines: true,
+              intakes: true,
+              websiteUrl: true,
+              isActive: true,
+              isFeatured: true,
+              createdAt: true,
+              updatedAt: true,
+              
+              // Primary image only
+              images: {
+                where: { isPrimary: true },
+                take: 1,
+                select: {
+                  imageUrl: true,
+                  imageAltText: true,
+                  imageTitle: true
+                }
               },
-              include: {
-                // Get essays for this user and program
-                essays: {
-                  where: { userId: userId },
-                  select: {
-                    id: true,
-                    title: true,
-                    content: true,
-                    status: true,
-                    wordCount: true,
-                    wordLimit: true,
-                    priority: true,
-                    lastModified: true,
-                    isCompleted: true,
-                    completionPercentage: true,
-                    createdAt: true,
-                    essayPromptId: true, // ✅ ADDED: Include essayPromptId for matching
-                    essayPrompt: {
-                      select: {
-                        id: true,
-                        promptTitle: true,
-                        promptText: true,
-                        isMandatory: true,
-                        wordLimit: true,
-                        minWordCount: true
+              
+              // **OPTIMIZATION #2: Conditionally filter programs**
+              programs: {
+                where: { isActive: true },
+                select: {
+                  id: true,
+                  programName: true,
+                  programSlug: true,
+                  degreeType: true,
+                  programLength: true,
+                  specializations: true,
+                  programDescription: true,
+                  
+                  // User's essays - minimal data
+                  essays: {
+                    where: { userId },
+                    select: {
+                      id: true,
+                      title: true,
+                      status: true,
+                      wordCount: true,
+                      wordLimit: true,
+                      priority: true,
+                      lastModified: true,
+                      isCompleted: true,
+                      completionPercentage: true,
+                      essayPromptId: true,
+                      essayPrompt: {
+                        select: {
+                          id: true,
+                          promptTitle: true,
+                          isMandatory: true,
+                          wordLimit: true,
+                          minWordCount: true
+                        }
                       }
                     }
-                  }
-                },
-                // Get essay prompts for the program
-                essayPrompts: {
-                  where: { isActive: true },
-                  select: {
-                    id: true,
-                    promptTitle: true,
-                    promptText: true,
-                    isMandatory: true,
-                    wordLimit: true,
-                    minWordCount: true
-                  }
-                },
-                // **Get admission requirements**
-                admissions: {
-                  where: { isActive: true },
-                  select: {
-                    id: true,
-                    minimumGpa: true,
-                    maximumGpa: true,
-                    gmatMinScore: true,
-                    gmatMaxScore: true,
-                    gmatAverageScore: true,
-                    greMinScore: true,
-                    greMaxScore: true,
-                    greAverageScore: true,
-                    ieltsMinScore: true,
-                    toeflMinScore: true,
-                    pteMinScore: true,
-                    workExperienceRequired: true,
-                    minWorkExperience: true,
-                    maxWorkExperience: true,
-                    acceptanceRate: true,
-                    applicationFee: true,
-                    currency: true,
-                    deadlines: {
-                      where: { isActive: true },
-                      orderBy: { deadlineDate: 'asc' },
-                      select: {
-                        id: true,
-                        deadlineType: true,
-                        deadlineDate: true,
-                        deadlineTime: true,
-                        timezone: true,
-                        title: true,
-                        description: true,
-                        priority: true,
-                        isExtended: true
-                      }
-                    },
-                    intakes: {
-                      where: { isActive: true },
-                      orderBy: { intakeYear: 'desc' },
-                      select: {
-                        id: true,
-                        intakeName: true,
-                        intakeType: true,
-                        intakeYear: true,
-                        intakeMonth: true,
-                        startDate: true,
-                        endDate: true,
-                        applicationOpenDate: true,
-                        applicationCloseDate: true,
-                        totalSeats: true,
-                        availableSeats: true
+                  },
+                  
+                  // Essay prompts
+                  essayPrompts: {
+                    where: { isActive: true },
+                    select: {
+                      id: true,
+                      promptTitle: true,
+                      isMandatory: true,
+                      wordLimit: true,
+                      minWordCount: true
+                    }
+                  },
+                  
+                  // Admission requirements - optimized
+                  admissions: {
+                    where: { isActive: true },
+                    take: 1, // Only first admission record
+                    select: {
+                      id: true,
+                      minimumGpa: true,
+                      maximumGpa: true,
+                      gmatMinScore: true,
+                      gmatMaxScore: true,
+                      gmatAverageScore: true,
+                      greMinScore: true,
+                      greMaxScore: true,
+                      greAverageScore: true,
+                      ieltsMinScore: true,
+                      toeflMinScore: true,
+                      pteMinScore: true,
+                      workExperienceRequired: true,
+                      minWorkExperience: true,
+                      maxWorkExperience: true,
+                      acceptanceRate: true,
+                      applicationFee: true,
+                      currency: true,
+                      
+                      // Only future deadlines
+                      deadlines: {
+                        where: { 
+                          isActive: true,
+                          deadlineDate: { gte: new Date() }
+                        },
+                        orderBy: { deadlineDate: 'asc' },
+                        take: 3, // Limit to next 3 deadlines
+                        select: {
+                          id: true,
+                          deadlineType: true,
+                          deadlineDate: true,
+                          title: true,
+                          priority: true,
+                          isExtended: true
+                        }
+                      },
+                      
+                      // Only recent intakes
+                      intakes: {
+                        where: { isActive: true },
+                        orderBy: { intakeYear: 'desc' },
+                        take: 2,
+                        select: {
+                          id: true,
+                          intakeName: true,
+                          intakeType: true,
+                          intakeYear: true,
+                          applicationOpenDate: true,
+                          applicationCloseDate: true
+                        }
                       }
                     }
                   }
                 }
-              }
-            },
-            // Get ALL calendar events for this university and user
-            calendarEvents: {
-              where: {
-                userId: userId,
-                isVisible: true
               },
-              select: {
-                id: true,
-                title: true,
-                description: true,
-                eventType: true,
-                eventStatus: true,
-                completionStatus: true,
-                startDate: true,
-                endDate: true,
-                priority: true,
-                isAllDay: true,
-                completedAt: true,
-                completionNotes: true,
-                createdAt: true
-              },
-              orderBy: {
-                startDate: 'asc'
+              
+              // **OPTIMIZATION #3: Only recent and future calendar events**
+              calendarEvents: {
+                where: {
+                  userId,
+                  isVisible: true,
+                  startDate: { 
+                    gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) // Last 30 days
+                  }
+                },
+                select: {
+                  id: true,
+                  title: true,
+                  description: true,
+                  eventType: true,
+                  eventStatus: true,
+                  completionStatus: true,
+                  startDate: true,
+                  endDate: true,
+                  priority: true,
+                  completedAt: true,
+                  createdAt: true
+                },
+                orderBy: { startDate: 'asc' },
+                take: 50 // Limit calendar events
               }
             }
           }
         }
-      }
-    });
+      }),
+
+      // **FIXED: Fetch ANY CV (removed isActive: true filter)**
+      prisma.cV.findFirst({
+        where: {
+          userId
+          // Removed isActive: true - will get any CV now
+        },
+        orderBy: {
+          updatedAt: 'desc' // Get most recently updated CV
+        },
+        select: {
+          id: true,
+          title: true,
+          slug: true,
+          completionPercentage: true,
+          atsScore: true,
+          lastATSCheckAt: true,
+          updatedAt: true,
+          
+          // Personal info - minimal
+          personalInfo: {
+            select: {
+              fullName: true,
+              email: true,
+              headline: true,
+              summary: true
+            }
+          },
+          
+          // Education - top 2 only
+          educations: {
+            orderBy: { displayOrder: 'asc' },
+            take: 2,
+            select: {
+              institution: true,
+              degree: true,
+              fieldOfStudy: true,
+              gpa: true,
+              endDate: true,
+              isCurrent: true
+            }
+          },
+          
+          // Experience - top 2 only
+          experiences: {
+            orderBy: { displayOrder: 'asc' },
+            take: 2,
+            select: {
+              company: true,
+              position: true,
+              endDate: true,
+              isCurrent: true
+            }
+          },
+          
+          // Skills summary
+          skills: {
+            take: 3,
+            select: {
+              categoryName: true,
+              skills: true
+            }
+          },
+          
+          // Latest AI analysis summary
+          aiAnalysis: {
+            where: { analysisType: 'overall' },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: {
+              overallScore: true,
+              atsScore: true,
+              createdAt: true
+            }
+          }
+        }
+      }),
+
+      // **NEW: Fetch AI Timeline summary (not full details)**
+      prisma.aITimeline.findMany({
+        where: {
+          userId,
+          isActive: true
+        },
+        select: {
+          id: true,
+          universityId: true,
+          programId: true,
+          timelineName: true,
+          completionStatus: true,
+          overallProgress: true,
+          totalPhases: true,
+          totalTasks: true,
+          targetDeadline: true,
+          generatedAt: true,
+          
+          // Completed tasks count only
+          tasks: {
+            where: { isCompleted: true },
+            select: { id: true }
+          }
+        }
+      })
+    ]);
 
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Process saved universities with enhanced completion logic
-    const savedUniversities = user?.savedUniversities?.map((university) => {
-      // Collect all essays from all programs (now filtered by study level)
-      const allEssays = university.programs.flatMap(program => program.essays || []);
-      const allEssayPrompts = university.programs.flatMap(program => program.essayPrompts || []);
-      const allAdmissions = university.programs.flatMap(program => program.admissions || []);
-      const allDeadlines = allAdmissions.flatMap(adm => adm.deadlines || []);
-      
-      // Calendar events for this university - THESE ARE THE TASKS!
-      const calendarEvents = university.calendarEvents || [];
-      
-      // ENHANCED ESSAY COMPLETION LOGIC: 
-      // Check both database status AND calculate completion based on word count
-      const enhancedEssayCompletion = allEssays.map(essay => {
-        const wordCountPercentage = essay.wordLimit > 0 
-          ? (essay.wordCount / essay.wordLimit) * 100 
-          : 0;
-        
-        // Essay is considered completed if:
-        // 1. Database shows it's completed, OR
-        // 2. Word count is >= 98% of word limit, OR  
-        // 3. Status is 'SUBMITTED'
-        const isActuallyCompleted = 
-          essay.isCompleted || 
-          essay.status === 'COMPLETED' || 
-          essay.status === 'SUBMITTED' || 
-          wordCountPercentage >= 98;
-        
-        return {
-          ...essay,
-          actualCompletionPercentage: Math.min(wordCountPercentage, 100),
-          isActuallyCompleted: isActuallyCompleted,
-          completionReason: isActuallyCompleted 
-            ? (essay.status === 'COMPLETED' || essay.status === 'SUBMITTED' ? 'status' 
-               : wordCountPercentage >= 98 ? 'word_count_98_percent' 
-               : 'database_flag') 
-            : 'not_complete'
-        };
+    // **OPTIMIZATION #4: Parse test scores once**
+    const userStudyLevel = userProfile?.studyLevel?.toLowerCase();
+    const testScores = parseTestScores(userProfile?.testScores);
+
+    // **OPTIMIZATION #5: Create timeline lookup map**
+    const timelineMap = new Map();
+    activeTimeline?.forEach(timeline => {
+      const key = `${timeline.universityId}-${timeline.programId || 'null'}`;
+      timelineMap.set(key, {
+        id: timeline.id,
+        timelineName: timeline.timelineName,
+        completionStatus: timeline.completionStatus,
+        overallProgress: timeline.overallProgress,
+        totalPhases: timeline.totalPhases,
+        totalTasks: timeline.totalTasks,
+        completedTasks: timeline.tasks?.length || 0,
+        targetDeadline: timeline.targetDeadline,
+        generatedAt: timeline.generatedAt
       });
+    });
 
-      // ✅ FIXED: Calculate essay progress using allEssayPrompts as the total
-      const totalEssayPrompts = allEssayPrompts.length;
-      const completedEssays = enhancedEssayCompletion.filter(essay => 
-        essay.isActuallyCompleted
-      ).length;
-      const inProgressEssays = enhancedEssayCompletion.filter(essay => 
-        !essay.isActuallyCompleted && (essay.status === 'IN_PROGRESS' || essay.wordCount > 0)
-      ).length;
-      const draftEssays = enhancedEssayCompletion.filter(essay => 
-        !essay.isActuallyCompleted && essay.status === 'DRAFT' && essay.wordCount === 0
-      ).length;
-      // ✅ FIXED: Calculate not started essays (prompts without any user essay)
-      const notStartedEssays = totalEssayPrompts - allEssays.length;
-      
-      const essayProgress = totalEssayPrompts > 0 
-        ? Math.round((completedEssays / totalEssayPrompts) * 100) 
-        : 0;
+    // **OPTIMIZATION #6: Process universities with optimized logic**
+    const savedUniversities = user.savedUniversities
+      .filter(university => {
+        // Filter by study level if specified
+        if (!userStudyLevel) return true;
+        return university.programs.some(p => 
+          p.degreeType?.toLowerCase() === userStudyLevel
+        );
+      })
+      .map((university) => {
+        // Filter programs by study level
+        const filteredPrograms = userStudyLevel
+          ? university.programs.filter(p => 
+              p.degreeType?.toLowerCase() === userStudyLevel
+            )
+          : university.programs;
 
-      // Calculate task progress from calendar events
-      const totalTasks = calendarEvents.length; 
-      const completedTasks = calendarEvents.filter(event => 
-        event.completionStatus === 'completed'
-      ).length;
-      const pendingTasks = calendarEvents.filter(event => 
-        event.completionStatus === 'pending'
-      ).length;
-      const inProgressTasks = calendarEvents.filter(event => 
-        event.completionStatus === 'in_progress'
-      ).length;
-      
-      const taskProgress = totalTasks > 0 
-        ? Math.round((completedTasks / totalTasks) * 100) 
-        : 0;
+        // **OPTIMIZATION #7: Use Array.reduce for aggregations**
+        const { allEssays, allEssayPrompts, allAdmissions } = filteredPrograms.reduce(
+          (acc, program) => {
+            acc.allEssays.push(...(program.essays || []));
+            acc.allEssayPrompts.push(...(program.essayPrompts || []));
+            acc.allAdmissions.push(...(program.admissions || []));
+            return acc;
+          },
+          { allEssays: [], allEssayPrompts: [], allAdmissions: [] }
+        );
 
-      // ENHANCED APPLICATION STATUS LOGIC:
-      // Status should only be 'submitted' when BOTH conditions are met:
-      // 1. ALL essays are completed (using enhanced completion logic)
-      // 2. ALL calendar events/tasks are completed
-      let applicationStatus = 'not-started';
-      let hasAnyActivity = false;
-
-      // Check if user has started any activity
-      if (allEssays.length > 0 || calendarEvents.length > 0) {
-        hasAnyActivity = true;
+        const calendarEvents = university.calendarEvents || [];
         
-        // Check if EVERYTHING is completed (strict requirement)
+        // **Calculate essay completion**
+        const enhancedEssays = allEssays.map(essay => {
+          const wordCountPercentage = essay.wordLimit > 0 
+            ? (essay.wordCount / essay.wordLimit) * 100 
+            : 0;
+          
+          const isActuallyCompleted = 
+            essay.isCompleted || 
+            essay.status === 'COMPLETED' || 
+            essay.status === 'SUBMITTED' || 
+            wordCountPercentage >= 98;
+          
+          return {
+            ...essay,
+            isActuallyCompleted,
+            actualCompletionPercentage: Math.min(wordCountPercentage, 100)
+          };
+        });
+
+        // **Calculate stats**
+        const totalEssayPrompts = allEssayPrompts.length;
+        const completedEssays = enhancedEssays.filter(e => e.isActuallyCompleted).length;
+        const inProgressEssays = enhancedEssays.filter(e => 
+          !e.isActuallyCompleted && (e.status === 'IN_PROGRESS' || e.wordCount > 0)
+        ).length;
+        const notStartedEssays = totalEssayPrompts - allEssays.length;
+        const essayProgress = totalEssayPrompts > 0 
+          ? Math.round((completedEssays / totalEssayPrompts) * 100) 
+          : 0;
+
+        const totalTasks = calendarEvents.length;
+        const completedTasks = calendarEvents.filter(e => 
+          e.completionStatus === 'completed'
+        ).length;
+        const taskProgress = totalTasks > 0 
+          ? Math.round((completedTasks / totalTasks) * 100) 
+          : 0;
+
+        // **Determine application status**
+        const hasAnyActivity = allEssays.length > 0 || calendarEvents.length > 0;
         const allEssaysCompleted = totalEssayPrompts === 0 || 
           (totalEssayPrompts > 0 && completedEssays === totalEssayPrompts);
         const allTasksCompleted = totalTasks === 0 || 
           (totalTasks > 0 && completedTasks === totalTasks);
         
-        // Only mark as submitted if BOTH essays and tasks are 100% complete
-        if (allEssaysCompleted && allTasksCompleted && (totalEssayPrompts > 0 || totalTasks > 0)) {
-          applicationStatus = 'submitted';
-        } else if (hasAnyActivity) {
-          applicationStatus = 'in-progress';
-        }
-      }
-
-      // Count upcoming deadlines with more detail
-      const now = new Date();
-      const upcomingDeadlines = calendarEvents.filter(event => {
-        const eventDate = new Date(event.startDate);
-        return eventDate > now && 
-               (event.eventType === 'deadline' || event.priority === 'high') &&
-               event.completionStatus !== 'completed';
-      });
-
-      // Count overdue events
-      const overdueEvents = calendarEvents.filter(event => {
-        const eventDate = new Date(event.startDate);
-        return eventDate < now && 
-               event.completionStatus === 'pending' &&
-               event.eventStatus === 'active';
-      });
-
-      // Calculate overall progress (weighted average of essays and tasks)
-      const overallProgress = totalEssayPrompts > 0 && totalTasks > 0 
-        ? Math.round((essayProgress * 0.7) + (taskProgress * 0.3)) // Essays weighted more
-        : totalEssayPrompts > 0 
-        ? essayProgress 
-        : taskProgress;
-
-      // **Combine all deadlines (from admissions + calendar events) - PRIORITIZE USER EVENTS FIRST**
-      const userCalendarDeadlines = calendarEvents
-        .filter(e => e.eventType === 'deadline' && new Date(e.startDate) > now)
-        .map(e => ({
-          id: e.id,
-          type: e.eventType,
-          date: e.startDate,
-          title: e.title,
-          description: e.description,
-          priority: e.priority,
-          source: 'user_calendar'
-        }));
-
-      const dbDeadlines = allDeadlines
-        .filter(d => new Date(d.deadlineDate) > now)
-        .map(d => ({
-          id: d.id,
-          type: d.deadlineType,
-          date: d.deadlineDate,
-          title: d.title,
-          description: d.description,
-          priority: d.priority,
-          source: 'database'
-        }));
-
-      const allDeadlinesCombined = [...userCalendarDeadlines, ...dbDeadlines]
-        .sort((a, b) => new Date(a.date) - new Date(b.date));
-
-      // Determine next deadline
-      const nextDeadlineEvent = calendarEvents
-        .filter(event => {
-          const eventDate = new Date(event.startDate);
-          return eventDate > now && event.completionStatus !== 'completed';
-        })
-        .sort((a, b) => new Date(a.startDate) - new Date(b.startDate))[0];
-
-      const nextDeadline = nextDeadlineEvent 
-        ? new Date(nextDeadlineEvent.startDate).toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric'
-          })
-        : allDeadlinesCombined[0]
-        ? new Date(allDeadlinesCombined[0].date).toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric'
-          })
-        : university.averageDeadlines 
-        ? university.averageDeadlines.split(",")[0]?.trim() || "TBD"
-        : "TBD";
-
-      // ✅ FIXED: Prepare essay details with ALL essay prompts (including not started)
-      const essayDetails = allEssayPrompts.map(prompt => {
-        const matchingEssay = enhancedEssayCompletion.find(
-          essay => essay.essayPromptId === prompt.id || essay.essayPrompt?.id === prompt.id
-        );
-        
-        if (matchingEssay) {
-          return {
-            id: matchingEssay.id,
-            promptId: prompt.id,
-            title: matchingEssay.title || prompt.promptTitle || 'Untitled Essay',
-            promptTitle: prompt.promptTitle,
-            promptText: prompt.promptText,
-            status: matchingEssay.status,
-            priority: matchingEssay.priority,
-            wordCount: matchingEssay.wordCount || 0,
-            wordLimit: matchingEssay.wordLimit || prompt.wordLimit || 0,
-            progressPercentage: matchingEssay.actualCompletionPercentage,
-            isMandatory: prompt.isMandatory || false,
-            lastModified: matchingEssay.lastModified,
-            isComplete: matchingEssay.isActuallyCompleted,
-            completionReason: matchingEssay.completionReason,
-            displayStatus: matchingEssay.isActuallyCompleted ? 'completed' : matchingEssay.status,
-            hasUserEssay: true
-          };
-        } else {
-          // No user essay for this prompt - NOT STARTED
-          return {
-            id: null,
-            promptId: prompt.id,
-            title: prompt.promptTitle || 'Untitled Essay',
-            promptTitle: prompt.promptTitle,
-            promptText: prompt.promptText,
-            status: 'NOT_STARTED',
-            priority: prompt.isMandatory ? 'high' : 'medium',
-            wordCount: 0,
-            wordLimit: prompt.wordLimit || 0,
-            progressPercentage: 0,
-            isMandatory: prompt.isMandatory || false,
-            lastModified: null,
-            isComplete: false,
-            completionReason: 'not_started',
-            displayStatus: 'not_started',
-            hasUserEssay: false
-          };
-        }
-      });
-
-      // Prepare calendar events with status information
-      const taskDetails = calendarEvents.map(event => ({
-        id: event.id,
-        title: event.title,
-        description: event.description,
-        eventType: event.eventType,
-        eventStatus: event.eventStatus,
-        completionStatus: event.completionStatus,
-        priority: event.priority,
-        startDate: event.startDate,
-        endDate: event.endDate,
-        isAllDay: event.isAllDay,
-        completedAt: event.completedAt,
-        completionNotes: event.completionNotes,
-        isComplete: event.completionStatus === 'completed',
-        isOverdue: new Date(event.startDate) < now && event.completionStatus === 'pending',
-        daysUntilDue: Math.ceil((new Date(event.startDate) - now) / (1000 * 60 * 60 * 24))
-      }));
-
-      // **Test score requirements vs user scores**
-      const requiresGMAT = allAdmissions.some(a => a.gmatMinScore > 0);
-      const requiresGRE = allAdmissions.some(a => a.greMinScore > 0);
-      const requiresIELTS = allAdmissions.some(a => a.ieltsMinScore > 0);
-      const requiresTOEFL = allAdmissions.some(a => a.toeflMinScore > 0);
-
-      // ✅ FIXED: Get acceptance rate from admissions or university level
-      const acceptanceRate = allAdmissions[0]?.acceptanceRate || university.acceptanceRate || null;
-
-      return {
-        id: university.id,
-        // Basic Information
-        name: university.universityName,
-        universityName: university.universityName,
-        slug: university.slug,
-        city: university.city,
-        state: university.state,
-        country: university.country,
-        location: `${university.city}${
-          university.state ? ", " + university.state : ""
-        }, ${university.country}`,
-        
-        // Images
-        images: university.images,
-        image: university.images[0]?.imageUrl || "/default-university.jpg",
-        imageAlt: university.images[0]?.imageAltText || university.universityName,
-        
-        // Rankings and scores
-        ftGlobalRanking: university.ftGlobalRanking,
-        rank: university.ftGlobalRanking ? `#${university.ftGlobalRanking}` : "N/A",
-        gmatAverageScore: university.gmatAverageScore,
-        gmatAverage: university.gmatAverageScore || "N/A",
-        acceptanceRate: acceptanceRate, // ✅ FIXED: Use the calculated acceptance rate
-        
-        // Financial information
-        tuitionFees: university.tuitionFees,
-        additionalFees: university.additionalFees,
-        totalCost: university.totalCost,
-        currency: university.currency || "USD",
-        
-        // Progress and status information - ENHANCED
-        status: applicationStatus,
-        essayProgress: essayProgress,
-        taskProgress: taskProgress,
-        overallProgress: overallProgress,
-        
-        // Task and deadline information
-        tasks: completedTasks,        
-        totalTasks: totalTasks,       
-        deadline: nextDeadline,
-        upcomingDeadlines: upcomingDeadlines.length,
-        overdueEvents: overdueEvents.length,
-        
-        // ✅ FIXED: Essay information with proper counts
-        totalEssays: totalEssayPrompts,
-        completedEssays: completedEssays,
-        inProgressEssays: inProgressEssays,
-        notStartedEssays: notStartedEssays,
-        
-        // Calendar Events
-        calendarEvents: calendarEvents,
-        
-        // **Programs data for AI timeline**
-        programs: university.programs.map(p => ({
-          id: p.id,
-          programName: p.programName,
-          programSlug: p.programSlug,
-          degreeType: p.degreeType,
-          programLength: p.programLength,
-          specializations: p.specializations,
-          programDescription: p.programDescription,
-          admissions: p.admissions,
-          essays: p.essays,
-          essayPrompts: p.essayPrompts
-        })),
-        
-        // **Deadlines from admissions + calendar (USER EVENTS PRIORITIZED)**
-        deadlines: allDeadlinesCombined.slice(0, 5),
-        
-        // **Admission requirements**
-        admissionRequirements: allAdmissions[0] || null,
-        
-        // **Test score requirements vs user scores**
-        requiresGMAT: requiresGMAT,
-        requiresGRE: requiresGRE,
-        requiresIELTS: requiresIELTS,
-        requiresTOEFL: requiresTOEFL,
-        
-        userHasGMAT: testScores.hasGMAT,
-        userHasGRE: testScores.hasGRE,
-        userHasIELTS: testScores.hasIELTS,
-        userHasTOEFL: testScores.hasTOEFL,
-        
-        // ✅ ADDED: Include user's actual test scores for timeline
-        userTestScores: testScores,
-        
-        // Enhanced Stats
-        stats: {
-          // Tasks Statistics
-          tasks: {
-            total: totalTasks,
-            completed: completedTasks,
-            pending: pendingTasks,
-            inProgress: inProgressTasks,
-            overdue: overdueEvents.length,
-            upcoming: upcomingDeadlines.length,
-            completionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
-            details: taskDetails
-          },
-          
-          // Calendar Events Statistics
-          calendarEvents: {
-            total: calendarEvents.length,
-            completed: completedTasks,
-            pending: pendingTasks,
-            inProgress: inProgressTasks,
-            overdue: overdueEvents.length,
-            upcoming: upcomingDeadlines.length,
-            completionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
-            events: taskDetails
-          },
-          
-          // ✅ FIXED: Essay Statistics with proper counts
-          essays: {
-            total: totalEssayPrompts,
-            completed: completedEssays,
-            inProgress: inProgressEssays,
-            draft: draftEssays,
-            notStarted: notStartedEssays,
-            completionRate: totalEssayPrompts > 0 ? Math.round((completedEssays / totalEssayPrompts) * 100) : 0,
-            averageProgress: essayDetails.length > 0 
-              ? Math.round(essayDetails.reduce((sum, essay) => {
-                  return sum + essay.progressPercentage;
-                }, 0) / essayDetails.length)
-              : 0,
-            essays: essayDetails, // ✅ Now includes ALL essay prompts
-            enhancedCompletionBreakdown: {
-              completedByStatus: enhancedEssayCompletion.filter(e => e.completionReason === 'status').length,
-              completedByWordCount98: enhancedEssayCompletion.filter(e => e.completionReason === 'word_count_98_percent').length,
-              completedByDatabaseFlag: enhancedEssayCompletion.filter(e => e.completionReason === 'database_flag').length,
-              notStarted: notStartedEssays
-            },
-            filteredByStudyLevel: userStudyLevel || null
-          },
-          
-          // Overall Application Health - ENHANCED
-          applicationHealth: {
-            status: applicationStatus,
-            overallProgress: overallProgress,
-            hasOverdueItems: overdueEvents.length > 0,
-            upcomingDeadlinesCount: upcomingDeadlines.length,
-            nextImportantDate: nextDeadline,
-            isFullyComplete: applicationStatus === 'submitted',
-            essaysFullyComplete: totalEssayPrompts === 0 || completedEssays === totalEssayPrompts,
-            tasksFullyComplete: totalTasks === 0 || completedTasks === totalTasks,
-            readyForSubmission: (totalEssayPrompts === 0 || completedEssays === totalEssayPrompts) && 
-                               (totalTasks === 0 || completedTasks === totalTasks),
-            lastActivity: allEssays.length > 0 || calendarEvents.length > 0 
-              ? Math.max(
-                  ...allEssays.map(e => new Date(e.lastModified).getTime()),
-                  ...calendarEvents.map(e => new Date(e.createdAt).getTime()),
-                  0
-                )
-              : null
+        let applicationStatus = 'not-started';
+        if (hasAnyActivity) {
+          if (allEssaysCompleted && allTasksCompleted && (totalEssayPrompts > 0 || totalTasks > 0)) {
+            applicationStatus = 'submitted';
+          } else {
+            applicationStatus = 'in-progress';
           }
-        },
-        
-        // Additional metadata
-        shortDescription: university.shortDescription,
-        overview: university.overview,
-        whyChooseHighlights: university.whyChooseHighlights || [],
-        averageDeadlines: university.averageDeadlines,
-        intakes: university.intakes,
-        websiteUrl: university.websiteUrl,
-        isActive: university.isActive,
-        isFeatured: university.isFeatured,
-        createdAt: university.createdAt,
-        updatedAt: university.updatedAt,
-        isAdded: true,
-        
-        // **Include user's study level in response**
-        userStudyLevel: userStudyLevel,
-        
-        // Debug information
-        _debug: process.env.NODE_ENV === 'development' ? {
-          totalPrograms: university.programs.length,
-          totalCalendarEvents: calendarEvents.length,
-          userStudyLevel: userStudyLevel,
-          totalEssayPrompts: totalEssayPrompts,
-          userEssaysCount: allEssays.length,
-          enhancedCompletionLogic: {
-            essaysWithEnhancedCompletion: enhancedEssayCompletion.map(e => ({
-              id: e.id,
-              title: e.title,
-              wordCount: e.wordCount,
-              wordLimit: e.wordLimit,
-              percentage: e.actualCompletionPercentage,
-              isComplete: e.isActuallyCompleted,
-              reason: e.completionReason
-            })),
-            applicationStatusCalculation: {
-              allEssaysCompleted: totalEssayPrompts === 0 || completedEssays === totalEssayPrompts,
-              allTasksCompleted: totalTasks === 0 || completedTasks === totalTasks,
-              finalStatus: applicationStatus
+        }
+
+        // **Calculate deadlines**
+        const now = new Date();
+        const upcomingDeadlines = calendarEvents.filter(event => 
+          new Date(event.startDate) > now && 
+          event.completionStatus !== 'completed'
+        );
+
+        // **Get AI Timeline data for this university**
+        const timelineKey = `${university.id}-${filteredPrograms[0]?.id || 'null'}`;
+        const aiTimelineData = timelineMap.get(timelineKey) || null;
+
+        return {
+          id: university.id,
+          name: university.universityName,
+          slug: university.slug,
+          city: university.city,
+          state: university.state,
+          country: university.country,
+          location: `${university.city}${university.state ? ", " + university.state : ""}, ${university.country}`,
+          
+          image: university.images[0]?.imageUrl || "/default-university.jpg",
+          imageAlt: university.images[0]?.imageAltText || university.universityName,
+          
+          ftGlobalRanking: university.ftGlobalRanking,
+          rank: university.ftGlobalRanking ? `#${university.ftGlobalRanking}` : "N/A",
+          gmatAverageScore: university.gmatAverageScore,
+          acceptanceRate: allAdmissions[0]?.acceptanceRate || university.acceptanceRate,
+          
+          tuitionFees: university.tuitionFees,
+          totalCost: university.totalCost,
+          currency: university.currency || "USD",
+          
+          status: applicationStatus,
+          essayProgress,
+          taskProgress,
+          overallProgress: totalEssayPrompts > 0 && totalTasks > 0 
+            ? Math.round((essayProgress * 0.7) + (taskProgress * 0.3))
+            : totalEssayPrompts > 0 ? essayProgress : taskProgress,
+          
+          tasks: completedTasks,
+          totalTasks,
+          totalEssays: totalEssayPrompts,
+          completedEssays,
+          inProgressEssays,
+          notStartedEssays,
+          upcomingDeadlines: upcomingDeadlines.length,
+          
+          deadline: upcomingDeadlines[0]
+            ? new Date(upcomingDeadlines[0].startDate).toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric'
+              })
+            : university.averageDeadlines?.split(",")[0]?.trim() || "TBD",
+
+          // **NEW: AI Timeline Summary**
+          aiTimeline: aiTimelineData,
+
+          // Test score requirements
+          requiresGMAT: allAdmissions.some(a => a.gmatMinScore > 0),
+          requiresGRE: allAdmissions.some(a => a.greMinScore > 0),
+          requiresIELTS: allAdmissions.some(a => a.ieltsMinScore > 0),
+          requiresTOEFL: allAdmissions.some(a => a.toeflMinScore > 0),
+          
+          userHasGMAT: testScores.hasGMAT,
+          userHasGRE: testScores.hasGRE,
+          userHasIELTS: testScores.hasIELTS,
+          userHasTOEFL: testScores.hasTOEFL,
+          userTestScores: testScores,
+
+          stats: {
+            tasks: {
+              total: totalTasks,
+              completed: completedTasks,
+              completionRate: taskProgress
+            },
+            essays: {
+              total: totalEssayPrompts,
+              completed: completedEssays,
+              inProgress: inProgressEssays,
+              notStarted: notStartedEssays,
+              completionRate: essayProgress
+            },
+            applicationHealth: {
+              status: applicationStatus,
+              overallProgress: totalEssayPrompts > 0 && totalTasks > 0 
+                ? Math.round((essayProgress * 0.7) + (taskProgress * 0.3))
+                : totalEssayPrompts > 0 ? essayProgress : taskProgress,
+              essaysFullyComplete: allEssaysCompleted,
+              tasksFullyComplete: allTasksCompleted,
+              readyForSubmission: allEssaysCompleted && allTasksCompleted
             }
           },
-          essayBreakdown: {
-            completed: completedEssays,
-            inProgress: inProgressEssays,
-            draft: draftEssays,
-            notStarted: notStartedEssays
-          },
-          taskBreakdown: {
-            completed: completedTasks,
-            pending: pendingTasks,
-            inProgress: inProgressTasks,
-            overdue: overdueEvents.length
-          }
-        } : undefined
-      };
-    });
 
-    // Calculate enhanced summary statistics
+          // Minimal data for rendering
+          shortDescription: university.shortDescription,
+          overview: university.overview,
+          whyChooseHighlights: university.whyChooseHighlights || [],
+          averageDeadlines: university.averageDeadlines,
+          websiteUrl: university.websiteUrl,
+          isAdded: true,
+          userStudyLevel
+        };
+      });
+
+    // **Calculate summary stats**
     const stats = {
       total: savedUniversities.length,
       inProgress: savedUniversities.filter(u => u.status === 'in-progress').length,
       submitted: savedUniversities.filter(u => u.status === 'submitted').length,
       notStarted: savedUniversities.filter(u => u.status === 'not-started').length,
       upcomingDeadlines: savedUniversities.reduce((sum, u) => sum + u.upcomingDeadlines, 0),
-      overdueEvents: savedUniversities.reduce((sum, u) => sum + u.overdueEvents, 0),
       
-      // Aggregated task statistics
       totalTasks: savedUniversities.reduce((sum, u) => sum + u.totalTasks, 0),
       completedTasks: savedUniversities.reduce((sum, u) => sum + u.tasks, 0),
       
-      // ✅ FIXED: Aggregated essay statistics
       totalEssays: savedUniversities.reduce((sum, u) => sum + u.totalEssays, 0),
       completedEssays: savedUniversities.reduce((sum, u) => sum + u.completedEssays, 0),
       inProgressEssays: savedUniversities.reduce((sum, u) => sum + u.inProgressEssays, 0),
       notStartedEssays: savedUniversities.reduce((sum, u) => sum + u.notStartedEssays, 0),
       
-      // Average progress across all universities
       averageProgress: savedUniversities.length > 0
         ? Math.round(savedUniversities.reduce((sum, u) => sum + u.overallProgress, 0) / savedUniversities.length)
         : 0,
       
-      // Universities requiring attention
-      universitiesNeedingAttention: savedUniversities.filter(u => u.overdueEvents > 0).length,
-      
-      // Enhanced completion tracking
       fullyCompletedUniversities: savedUniversities.filter(u => u.status === 'submitted').length,
       universitiesReadyForSubmission: savedUniversities.filter(u => 
         u.stats?.applicationHealth?.readyForSubmission
@@ -851,25 +658,66 @@ if (userProfile?.testScores) {
       filteredByStudyLevel: userStudyLevel || null
     };
 
+    // **NEW: CV Summary**
+    const cvSummary = activeCV ? {
+      id: activeCV.id,
+      title: activeCV.title,
+      slug: activeCV.slug,
+      completionPercentage: activeCV.completionPercentage,
+      atsScore: activeCV.atsScore,
+      lastATSCheckAt: activeCV.lastATSCheckAt,
+      updatedAt: activeCV.updatedAt,
+      
+      personalInfo: activeCV.personalInfo ? {
+        fullName: activeCV.personalInfo.fullName,
+        email: activeCV.personalInfo.email,
+        headline: activeCV.personalInfo.headline,
+        summary: activeCV.personalInfo.summary?.substring(0, 150) // Truncate summary
+      } : null,
+      
+      education: activeCV.educations?.map(edu => ({
+        institution: edu.institution,
+        degree: edu.degree,
+        fieldOfStudy: edu.fieldOfStudy,
+        gpa: edu.gpa,
+        isCurrent: edu.isCurrent
+      })) || [],
+      
+      experience: activeCV.experiences?.map(exp => ({
+        company: exp.company,
+        position: exp.position,
+        isCurrent: exp.isCurrent
+      })) || [],
+      
+      skills: activeCV.skills?.map(skill => ({
+        category: skill.categoryName,
+        skillCount: skill.skills?.length || 0
+      })) || [],
+      
+      latestAIAnalysis: activeCV.aiAnalysis?.[0] || null
+    } : null;
+
     return res.status(200).json({
       success: true,
       count: savedUniversities.length,
       universities: savedUniversities,
-      stats: stats,
+      stats,
       userProfile: {
         studyLevel: userStudyLevel,
         gpa: userProfile?.gpa,
-        testScores: testScores,
+        testScores,
         workExperience: userProfile?.workExperience
       },
+      cvSummary, // **NEW**
       timestamp: new Date().toISOString(),
-      userStudyLevel: userStudyLevel,
       enhancedFeatures: {
         essayCompletionAt98Percent: true,
         strictSubmissionRequirements: true,
         enhancedProgressTracking: true,
         filteredByStudyLevel: !!userStudyLevel,
-        includesAllEssayPrompts: true // ✅ NEW: Flag indicating all prompts are included
+        includesAllEssayPrompts: true,
+        includesAITimeline: true, // **NEW**
+        includesCVSummary: !!cvSummary // **NEW**
       }
     });
     
@@ -883,6 +731,61 @@ if (userProfile?.testScores) {
   }
 }
 
+// **HELPER FUNCTION: Parse test scores**
+function parseTestScores(testScoresInput) {
+  const defaultScores = {
+    hasGMAT: false,
+    hasGRE: false,
+    hasIELTS: false,
+    hasTOEFL: false,
+    gmatScore: null,
+    greScore: null,
+    ieltsScore: null,
+    toeflScore: null
+  };
+
+  if (!testScoresInput) return defaultScores;
+
+  try {
+    let scores = {};
+    
+    if (typeof testScoresInput === 'string') {
+      const testScoresStr = testScoresInput.trim();
+      
+      if (testScoresStr.startsWith('{') || testScoresStr.startsWith('[')) {
+        scores = JSON.parse(testScoresStr);
+      } else {
+        const parts = testScoresStr.split(',');
+        parts.forEach(part => {
+          const [key, value] = part.split(':').map(s => s.trim());
+          if (key && value) {
+            const normalizedKey = key.toLowerCase();
+            const numValue = parseFloat(value);
+            if (!isNaN(numValue)) {
+              scores[normalizedKey] = numValue;
+            }
+          }
+        });
+      }
+    } else if (typeof testScoresInput === 'object') {
+      scores = testScoresInput;
+    }
+    
+    return {
+      hasGMAT: !!scores.gmat && scores.gmat > 0,
+      hasGRE: !!scores.gre && scores.gre > 0,
+      hasIELTS: !!scores.ielts && scores.ielts > 0,
+      hasTOEFL: !!scores.toefl && scores.toefl > 0,
+      gmatScore: scores.gmat || null,
+      greScore: scores.gre || null,
+      ieltsScore: scores.ielts || null,
+      toeflScore: scores.toefl || null
+    };
+  } catch (e) {
+    console.error("Error parsing test scores:", e);
+    return defaultScores;
+  }
+}
 
 export async function getUniversityBySlug(req, res) {
   try {
