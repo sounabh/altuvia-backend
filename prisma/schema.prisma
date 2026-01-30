@@ -11,6 +11,8 @@ datasource db {
 
 // ==================== USER MODELS ====================
 
+
+
 model User {
   id            String   @id @default(cuid())
   email         String   @unique
@@ -298,7 +300,7 @@ model Department {
 
 model Program {
   id                     String   @id @default(cuid())
-  universityId           String
+  universityId           String?
   programName            String
   programSlug            String   @unique
   degreeType             String?
@@ -317,7 +319,7 @@ model Program {
   updatedAt              DateTime @updatedAt
 
   // Relations
-  university        University         @relation(fields: [universityId], references: [id], onDelete: Cascade)
+  university        University?        @relation(fields: [universityId], references: [id], onDelete: Cascade)
   departments       ProgramDepartment[] // Many-to-many through junction table
   syllabus          Syllabus?
   rankings          ProgramRanking[]
