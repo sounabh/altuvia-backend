@@ -103,7 +103,6 @@ export async function toggleAdded(req, res) {
   }
 }
 
-
 export async function getSavedUniversities(req, res) {
   try {
     const userId = req.userId;
@@ -112,9 +111,9 @@ export async function getSavedUniversities(req, res) {
       return res.status(401).json({ error: "User is not authenticated" });
     }
 
-    // **OPTIMIZATION #1: Parallel data fetching for maximum speed**
-    const [userProfile, user, activeCV, activeTimeline] = await Promise.all([
-      // Fetch user profile
+    // **OPTIMIZATION: Single optimized query with all necessary data**
+    const [userProfile, userData, cvData, timelineData] = await Promise.all([
+      // 1. User Profile - Minimal fields
       prisma.userProfile.findUnique({
         where: { userId },
         select: { 
@@ -122,12 +121,10 @@ export async function getSavedUniversities(req, res) {
           gpa: true,
           testScores: true,
           workExperience: true,
-          countries: true,
-          courses: true
         },
       }),
       
-      // Fetch user with optimized university relations
+      // 2. User with optimized university relations
       prisma.user.findUnique({
         where: { id: userId },
         select: {
@@ -135,7 +132,6 @@ export async function getSavedUniversities(req, res) {
           savedUniversities: {
             where: { isActive: true },
             select: {
-              // Basic university info
               id: true,
               universityName: true,
               slug: true,
@@ -160,18 +156,17 @@ export async function getSavedUniversities(req, res) {
               createdAt: true,
               updatedAt: true,
               
-              // Primary image only
+              // Only primary image
               images: {
                 where: { isPrimary: true },
                 take: 1,
                 select: {
                   imageUrl: true,
                   imageAltText: true,
-                  imageTitle: true
                 }
               },
               
-              // **OPTIMIZATION #2: Conditionally filter programs**
+              // Programs with nested data
               programs: {
                 where: { isActive: true },
                 select: {
@@ -183,7 +178,7 @@ export async function getSavedUniversities(req, res) {
                   specializations: true,
                   programDescription: true,
                   
-                  // User's essays - minimal data
+                  // User's essays for this program
                   essays: {
                     where: { userId },
                     select: {
@@ -209,7 +204,7 @@ export async function getSavedUniversities(req, res) {
                     }
                   },
                   
-                  // Essay prompts
+                  // All essay prompts for this program
                   essayPrompts: {
                     where: { isActive: true },
                     select: {
@@ -221,10 +216,10 @@ export async function getSavedUniversities(req, res) {
                     }
                   },
                   
-                  // Admission requirements - optimized
+                  // Admission requirements
                   admissions: {
                     where: { isActive: true },
-                    take: 1, // Only first admission record
+                    take: 1,
                     select: {
                       id: true,
                       minimumGpa: true,
@@ -245,14 +240,14 @@ export async function getSavedUniversities(req, res) {
                       applicationFee: true,
                       currency: true,
                       
-                      // Only future deadlines
+                      // Only upcoming deadlines
                       deadlines: {
                         where: { 
                           isActive: true,
                           deadlineDate: { gte: new Date() }
                         },
                         orderBy: { deadlineDate: 'asc' },
-                        take: 3, // Limit to next 3 deadlines
+                        take: 3,
                         select: {
                           id: true,
                           deadlineType: true,
@@ -263,7 +258,7 @@ export async function getSavedUniversities(req, res) {
                         }
                       },
                       
-                      // Only recent intakes
+                      // Recent intakes only
                       intakes: {
                         where: { isActive: true },
                         orderBy: { intakeYear: 'desc' },
@@ -282,7 +277,7 @@ export async function getSavedUniversities(req, res) {
                 }
               },
               
-              // **OPTIMIZATION #3: Only recent and future calendar events**
+              // Calendar events - only recent and upcoming
               calendarEvents: {
                 where: {
                   userId,
@@ -305,32 +300,27 @@ export async function getSavedUniversities(req, res) {
                   createdAt: true
                 },
                 orderBy: { startDate: 'asc' },
-                take: 50 // Limit calendar events
+                take: 50
               }
             }
           }
         }
       }),
 
-      // **FIXED: Fetch ANY CV (removed isActive: true filter)**
+      // 3. CV Data - Get any CV (removed isActive filter)
       prisma.cV.findFirst({
-        where: {
-          userId
-          // Removed isActive: true - will get any CV now
-        },
-        orderBy: {
-          updatedAt: 'desc' // Get most recently updated CV
-        },
+        where: { userId },
+        orderBy: { updatedAt: 'desc' },
         select: {
           id: true,
           title: true,
           slug: true,
+          isActive: true,
           completionPercentage: true,
           atsScore: true,
           lastATSCheckAt: true,
           updatedAt: true,
           
-          // Personal info - minimal
           personalInfo: {
             select: {
               fullName: true,
@@ -340,7 +330,6 @@ export async function getSavedUniversities(req, res) {
             }
           },
           
-          // Education - top 2 only
           educations: {
             orderBy: { displayOrder: 'asc' },
             take: 2,
@@ -354,7 +343,6 @@ export async function getSavedUniversities(req, res) {
             }
           },
           
-          // Experience - top 2 only
           experiences: {
             orderBy: { displayOrder: 'asc' },
             take: 2,
@@ -366,7 +354,6 @@ export async function getSavedUniversities(req, res) {
             }
           },
           
-          // Skills summary
           skills: {
             take: 3,
             select: {
@@ -375,7 +362,6 @@ export async function getSavedUniversities(req, res) {
             }
           },
           
-          // Latest AI analysis summary
           aiAnalysis: {
             where: { analysisType: 'overall' },
             orderBy: { createdAt: 'desc' },
@@ -389,7 +375,7 @@ export async function getSavedUniversities(req, res) {
         }
       }),
 
-      // **NEW: Fetch AI Timeline summary (not full details)**
+      // 4. AI Timeline - Aggregated data only
       prisma.aITimeline.findMany({
         where: {
           userId,
@@ -407,7 +393,7 @@ export async function getSavedUniversities(req, res) {
           targetDeadline: true,
           generatedAt: true,
           
-          // Completed tasks count only
+          // Only count completed tasks
           tasks: {
             where: { isCompleted: true },
             select: { id: true }
@@ -416,17 +402,18 @@ export async function getSavedUniversities(req, res) {
       })
     ]);
 
-    if (!user) {
+    if (!userData) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // **OPTIMIZATION #4: Parse test scores once**
+    // **OPTIMIZATION: Pre-compute common values**
     const userStudyLevel = userProfile?.studyLevel?.toLowerCase();
     const testScores = parseTestScores(userProfile?.testScores);
+    const now = new Date();
 
-    // **OPTIMIZATION #5: Create timeline lookup map**
+    // **OPTIMIZATION: Build timeline lookup map once**
     const timelineMap = new Map();
-    activeTimeline?.forEach(timeline => {
+    timelineData?.forEach(timeline => {
       const key = `${timeline.universityId}-${timeline.programId || 'null'}`;
       timelineMap.set(key, {
         id: timeline.id,
@@ -441,10 +428,10 @@ export async function getSavedUniversities(req, res) {
       });
     });
 
-    // **OPTIMIZATION #6: Process universities with optimized logic**
-    const savedUniversities = user.savedUniversities
+    // **OPTIMIZATION: Transform universities with computed values**
+    const savedUniversities = userData.savedUniversities
       .filter(university => {
-        // Filter by study level if specified
+        // Filter by study level if set
         if (!userStudyLevel) return true;
         return university.programs.some(p => 
           p.degreeType?.toLowerCase() === userStudyLevel
@@ -458,7 +445,7 @@ export async function getSavedUniversities(req, res) {
             )
           : university.programs;
 
-        // **OPTIMIZATION #7: Use Array.reduce for aggregations**
+        // **OPTIMIZATION: Aggregate all essays, prompts, and admissions in one pass**
         const { allEssays, allEssayPrompts, allAdmissions } = filteredPrograms.reduce(
           (acc, program) => {
             acc.allEssays.push(...(program.essays || []));
@@ -470,9 +457,9 @@ export async function getSavedUniversities(req, res) {
         );
 
         const calendarEvents = university.calendarEvents || [];
-        
-        // **Calculate essay completion**
-        const enhancedEssays = allEssays.map(essay => {
+
+        // **OPTIMIZATION: Calculate essay completion in one pass**
+        const essayStats = allEssays.reduce((stats, essay) => {
           const wordCountPercentage = essay.wordLimit > 0 
             ? (essay.wordCount / essay.wordLimit) * 100 
             : 0;
@@ -483,24 +470,24 @@ export async function getSavedUniversities(req, res) {
             essay.status === 'SUBMITTED' || 
             wordCountPercentage >= 98;
           
-          return {
-            ...essay,
-            isActuallyCompleted,
-            actualCompletionPercentage: Math.min(wordCountPercentage, 100)
-          };
-        });
+          if (isActuallyCompleted) {
+            stats.completed++;
+          } else if (essay.status === 'IN_PROGRESS' || essay.wordCount > 0) {
+            stats.inProgress++;
+          }
+          
+          return stats;
+        }, { completed: 0, inProgress: 0 });
 
-        // **Calculate stats**
         const totalEssayPrompts = allEssayPrompts.length;
-        const completedEssays = enhancedEssays.filter(e => e.isActuallyCompleted).length;
-        const inProgressEssays = enhancedEssays.filter(e => 
-          !e.isActuallyCompleted && (e.status === 'IN_PROGRESS' || e.wordCount > 0)
-        ).length;
+        const completedEssays = essayStats.completed;
+        const inProgressEssays = essayStats.inProgress;
         const notStartedEssays = totalEssayPrompts - allEssays.length;
         const essayProgress = totalEssayPrompts > 0 
           ? Math.round((completedEssays / totalEssayPrompts) * 100) 
           : 0;
 
+        // **OPTIMIZATION: Calculate task completion**
         const totalTasks = calendarEvents.length;
         const completedTasks = calendarEvents.filter(e => 
           e.completionStatus === 'completed'
@@ -509,7 +496,7 @@ export async function getSavedUniversities(req, res) {
           ? Math.round((completedTasks / totalTasks) * 100) 
           : 0;
 
-        // **Determine application status**
+        // **OPTIMIZATION: Determine application status**
         const hasAnyActivity = allEssays.length > 0 || calendarEvents.length > 0;
         const allEssaysCompleted = totalEssayPrompts === 0 || 
           (totalEssayPrompts > 0 && completedEssays === totalEssayPrompts);
@@ -525,17 +512,22 @@ export async function getSavedUniversities(req, res) {
           }
         }
 
-        // **Calculate deadlines**
-        const now = new Date();
+        // **OPTIMIZATION: Find upcoming deadlines efficiently**
         const upcomingDeadlines = calendarEvents.filter(event => 
           new Date(event.startDate) > now && 
           event.completionStatus !== 'completed'
         );
 
-        // **Get AI Timeline data for this university**
+        // Get AI timeline data
         const timelineKey = `${university.id}-${filteredPrograms[0]?.id || 'null'}`;
         const aiTimelineData = timelineMap.get(timelineKey) || null;
 
+        // **OPTIMIZATION: Calculate overall progress once**
+        const overallProgress = totalEssayPrompts > 0 && totalTasks > 0 
+          ? Math.round((essayProgress * 0.7) + (taskProgress * 0.3))
+          : totalEssayPrompts > 0 ? essayProgress : taskProgress;
+
+        // **OPTIMIZATION: Return optimized university object**
         return {
           id: university.id,
           name: university.universityName,
@@ -560,9 +552,7 @@ export async function getSavedUniversities(req, res) {
           status: applicationStatus,
           essayProgress,
           taskProgress,
-          overallProgress: totalEssayPrompts > 0 && totalTasks > 0 
-            ? Math.round((essayProgress * 0.7) + (taskProgress * 0.3))
-            : totalEssayPrompts > 0 ? essayProgress : taskProgress,
+          overallProgress,
           
           tasks: completedTasks,
           totalTasks,
@@ -580,10 +570,8 @@ export async function getSavedUniversities(req, res) {
               })
             : university.averageDeadlines?.split(",")[0]?.trim() || "TBD",
 
-          // **NEW: AI Timeline Summary**
           aiTimeline: aiTimelineData,
 
-          // Test score requirements
           requiresGMAT: allAdmissions.some(a => a.gmatMinScore > 0),
           requiresGRE: allAdmissions.some(a => a.greMinScore > 0),
           requiresIELTS: allAdmissions.some(a => a.ieltsMinScore > 0),
@@ -610,16 +598,13 @@ export async function getSavedUniversities(req, res) {
             },
             applicationHealth: {
               status: applicationStatus,
-              overallProgress: totalEssayPrompts > 0 && totalTasks > 0 
-                ? Math.round((essayProgress * 0.7) + (taskProgress * 0.3))
-                : totalEssayPrompts > 0 ? essayProgress : taskProgress,
+              overallProgress,
               essaysFullyComplete: allEssaysCompleted,
               tasksFullyComplete: allTasksCompleted,
               readyForSubmission: allEssaysCompleted && allTasksCompleted
             }
           },
 
-          // Minimal data for rendering
           shortDescription: university.shortDescription,
           overview: university.overview,
           whyChooseHighlights: university.whyChooseHighlights || [],
@@ -630,52 +615,67 @@ export async function getSavedUniversities(req, res) {
         };
       });
 
-    // **Calculate summary stats**
-    const stats = {
-      total: savedUniversities.length,
-      inProgress: savedUniversities.filter(u => u.status === 'in-progress').length,
-      submitted: savedUniversities.filter(u => u.status === 'submitted').length,
-      notStarted: savedUniversities.filter(u => u.status === 'not-started').length,
-      upcomingDeadlines: savedUniversities.reduce((sum, u) => sum + u.upcomingDeadlines, 0),
+    // **OPTIMIZATION: Calculate stats in single pass**
+    const stats = savedUniversities.reduce((acc, u) => {
+      acc.total++;
+      if (u.status === 'in-progress') acc.inProgress++;
+      if (u.status === 'submitted') acc.submitted++;
+      if (u.status === 'not-started') acc.notStarted++;
       
-      totalTasks: savedUniversities.reduce((sum, u) => sum + u.totalTasks, 0),
-      completedTasks: savedUniversities.reduce((sum, u) => sum + u.tasks, 0),
+      acc.upcomingDeadlines += u.upcomingDeadlines;
+      acc.totalTasks += u.totalTasks;
+      acc.completedTasks += u.tasks;
+      acc.totalEssays += u.totalEssays;
+      acc.completedEssays += u.completedEssays;
+      acc.inProgressEssays += u.inProgressEssays;
+      acc.notStartedEssays += u.notStartedEssays;
+      acc.totalProgress += u.overallProgress;
       
-      totalEssays: savedUniversities.reduce((sum, u) => sum + u.totalEssays, 0),
-      completedEssays: savedUniversities.reduce((sum, u) => sum + u.completedEssays, 0),
-      inProgressEssays: savedUniversities.reduce((sum, u) => sum + u.inProgressEssays, 0),
-      notStartedEssays: savedUniversities.reduce((sum, u) => sum + u.notStartedEssays, 0),
+      if (u.status === 'submitted') acc.fullyCompletedUniversities++;
+      if (u.stats?.applicationHealth?.readyForSubmission) acc.universitiesReadyForSubmission++;
       
-      averageProgress: savedUniversities.length > 0
-        ? Math.round(savedUniversities.reduce((sum, u) => sum + u.overallProgress, 0) / savedUniversities.length)
-        : 0,
-      
-      fullyCompletedUniversities: savedUniversities.filter(u => u.status === 'submitted').length,
-      universitiesReadyForSubmission: savedUniversities.filter(u => 
-        u.stats?.applicationHealth?.readyForSubmission
-      ).length,
-      
-      filteredByStudyLevel: userStudyLevel || null
-    };
+      return acc;
+    }, {
+      total: 0,
+      inProgress: 0,
+      submitted: 0,
+      notStarted: 0,
+      upcomingDeadlines: 0,
+      totalTasks: 0,
+      completedTasks: 0,
+      totalEssays: 0,
+      completedEssays: 0,
+      inProgressEssays: 0,
+      notStartedEssays: 0,
+      totalProgress: 0,
+      fullyCompletedUniversities: 0,
+      universitiesReadyForSubmission: 0
+    });
 
-    // **NEW: CV Summary**
-    const cvSummary = activeCV ? {
-      id: activeCV.id,
-      title: activeCV.title,
-      slug: activeCV.slug,
-      completionPercentage: activeCV.completionPercentage,
-      atsScore: activeCV.atsScore,
-      lastATSCheckAt: activeCV.lastATSCheckAt,
-      updatedAt: activeCV.updatedAt,
+    stats.averageProgress = stats.total > 0
+      ? Math.round(stats.totalProgress / stats.total)
+      : 0;
+    stats.filteredByStudyLevel = userStudyLevel || null;
+
+    // **OPTIMIZATION: Build CV summary efficiently**
+    const cvSummary = cvData ? {
+      id: cvData.id,
+      title: cvData.title,
+      slug: cvData.slug,
+      isActive: cvData.isActive,
+      completionPercentage: cvData.completionPercentage,
+      atsScore: cvData.atsScore,
+      lastATSCheckAt: cvData.lastATSCheckAt,
+      updatedAt: cvData.updatedAt,
       
-      personalInfo: activeCV.personalInfo ? {
-        fullName: activeCV.personalInfo.fullName,
-        email: activeCV.personalInfo.email,
-        headline: activeCV.personalInfo.headline,
-        summary: activeCV.personalInfo.summary?.substring(0, 150) // Truncate summary
+      personalInfo: cvData.personalInfo ? {
+        fullName: cvData.personalInfo.fullName,
+        email: cvData.personalInfo.email,
+        headline: cvData.personalInfo.headline,
+        summary: cvData.personalInfo.summary?.substring(0, 150)
       } : null,
       
-      education: activeCV.educations?.map(edu => ({
+      education: cvData.educations?.map(edu => ({
         institution: edu.institution,
         degree: edu.degree,
         fieldOfStudy: edu.fieldOfStudy,
@@ -683,20 +683,21 @@ export async function getSavedUniversities(req, res) {
         isCurrent: edu.isCurrent
       })) || [],
       
-      experience: activeCV.experiences?.map(exp => ({
+      experience: cvData.experiences?.map(exp => ({
         company: exp.company,
         position: exp.position,
         isCurrent: exp.isCurrent
       })) || [],
       
-      skills: activeCV.skills?.map(skill => ({
+      skills: cvData.skills?.map(skill => ({
         category: skill.categoryName,
         skillCount: skill.skills?.length || 0
       })) || [],
       
-      latestAIAnalysis: activeCV.aiAnalysis?.[0] || null
+      latestAIAnalysis: cvData.aiAnalysis?.[0] || null
     } : null;
 
+    // Return response
     return res.status(200).json({
       success: true,
       count: savedUniversities.length,
@@ -708,7 +709,7 @@ export async function getSavedUniversities(req, res) {
         testScores,
         workExperience: userProfile?.workExperience
       },
-      cvSummary, // **NEW**
+      cvSummary,
       timestamp: new Date().toISOString(),
       enhancedFeatures: {
         essayCompletionAt98Percent: true,
@@ -716,13 +717,13 @@ export async function getSavedUniversities(req, res) {
         enhancedProgressTracking: true,
         filteredByStudyLevel: !!userStudyLevel,
         includesAllEssayPrompts: true,
-        includesAITimeline: true, // **NEW**
-        includesCVSummary: !!cvSummary // **NEW**
+        includesAITimeline: true,
+        includesCVSummary: !!cvSummary
       }
     });
     
   } catch (error) {
-    console.error("Error fetching saved universities:", error);
+    console.error("❌ Error fetching saved universities:", error);
     return res.status(500).json({
       success: false,
       error: "Internal server error",
@@ -731,20 +732,20 @@ export async function getSavedUniversities(req, res) {
   }
 }
 
-// **HELPER FUNCTION: Parse test scores**
+// **OPTIMIZATION: Optimized helper function with early returns**
 function parseTestScores(testScoresInput) {
-  const defaultScores = {
-    hasGMAT: false,
-    hasGRE: false,
-    hasIELTS: false,
-    hasTOEFL: false,
-    gmatScore: null,
-    greScore: null,
-    ieltsScore: null,
-    toeflScore: null
-  };
-
-  if (!testScoresInput) return defaultScores;
+  if (!testScoresInput) {
+    return {
+      hasGMAT: false,
+      hasGRE: false,
+      hasIELTS: false,
+      hasTOEFL: false,
+      gmatScore: null,
+      greScore: null,
+      ieltsScore: null,
+      toeflScore: null
+    };
+  }
 
   try {
     let scores = {};
@@ -755,6 +756,7 @@ function parseTestScores(testScoresInput) {
       if (testScoresStr.startsWith('{') || testScoresStr.startsWith('[')) {
         scores = JSON.parse(testScoresStr);
       } else {
+        // Parse comma-separated format
         const parts = testScoresStr.split(',');
         parts.forEach(part => {
           const [key, value] = part.split(':').map(s => s.trim());
@@ -783,7 +785,16 @@ function parseTestScores(testScoresInput) {
     };
   } catch (e) {
     console.error("Error parsing test scores:", e);
-    return defaultScores;
+    return {
+      hasGMAT: false,
+      hasGRE: false,
+      hasIELTS: false,
+      hasTOEFL: false,
+      gmatScore: null,
+      greScore: null,
+      ieltsScore: null,
+      toeflScore: null
+    };
   }
 }
 
