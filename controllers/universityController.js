@@ -234,6 +234,23 @@ export async function getUniversityBySlug(req, res) {
       return res.status(404).json({ error: "University not found" });
     }
 
+    // ===== NEW: Fetch user's custom essays for this university =====
+    let userCustomEssays = [];
+    if (userId && university) {
+      userCustomEssays = await prisma.essay.findMany({
+        where: {
+          userId,
+          isCustomEssay: true,
+          customUniversityId: university.id,
+        },
+        include: {
+          versions: { orderBy: { timestamp: 'desc' }, take: 20 },
+          aiResults: { orderBy: { createdAt: 'desc' }, take: 3 },
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+    }
+
     // Check if user has saved this university
     const isAddedByCurrentUser = userId 
       ? university.savedByUsers.some(user => user.id === userId) 
@@ -259,7 +276,7 @@ export async function getUniversityBySlug(req, res) {
     const tasksAndEvents = [...deadlines, ...transformedCalendarEvents]
       .sort((a, b) => new Date(a.date) - new Date(b.date));
 
-    // Format and return response
+    // Format and return response (pass userCustomEssays)
     const formattedUniversity = formatUniversityResponse(
       university,
       isAddedByCurrentUser,
@@ -270,7 +287,8 @@ export async function getUniversityBySlug(req, res) {
       tasksAndEvents,
       transformedCalendarEvents,
       deadlines,
-      userStudyLevel
+      userStudyLevel,
+      userCustomEssays   // ← new argument
     );
 
     return res.status(200).json(formattedUniversity);
@@ -1046,6 +1064,7 @@ function transformCalendarEvents(calendarEvents, university) {
   });
 }
 
+// ===== MODIFIED: Added userCustomEssays parameter =====
 function formatUniversityResponse(
   university,
   isAddedByCurrentUser,
@@ -1056,7 +1075,8 @@ function formatUniversityResponse(
   tasksAndEvents,
   transformedCalendarEvents,
   deadlines,
-  userStudyLevel
+  userStudyLevel,
+  userCustomEssays   // ← new parameter
 ) {
   const primaryImage = university.images.find(img => img.isPrimary)?.imageUrl ||
                       university.images[0]?.imageUrl ||
@@ -1194,6 +1214,22 @@ function formatUniversityResponse(
     enhancedStats: enhancedStats,
 
     userStudyLevel,
+
+    // ===== NEW: include user's custom essays for this university =====
+    userCustomEssays: userCustomEssays.map(e => ({
+      id: e.id,
+      title: e.customPromptTitle,
+      prompt: e.customPromptText,
+      wordLimit: e.customWordLimit ?? e.wordLimit,
+      content: e.content ?? '',
+      wordCount: e.wordCount ?? 0,
+      status: e.status,
+      priority: e.priority,
+      isCompleted: e.isCompleted,
+      lastModified: e.lastModified,
+      versions: e.versions ?? [],
+      isCustom: true,
+    })),
 
     createdAt: university.createdAt,
     updatedAt: university.updatedAt
