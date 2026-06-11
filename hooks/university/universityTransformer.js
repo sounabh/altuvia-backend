@@ -172,6 +172,7 @@ export function transformUniversity(university, { userStudyLevel, testScores, ti
   return {
     id: university.id,
     name: university.universityName,
+    universityName: university.universityName, // ✅ Added alias
     slug: university.slug,
     city: university.city,
     state: university.state,
@@ -218,6 +219,68 @@ export function transformUniversity(university, { userStudyLevel, testScores, ti
     userHasTOEFL: testScores.hasTOEFL,
     userTestScores: testScores,
 
+    // ✅ CRITICAL: Preserve raw calendar events for Next30Days component
+    calendarEvents: calendarEvents.map(event => ({
+      id: event.id,
+      title: event.title,
+      description: event.description,
+      eventType: event.eventType,
+      eventStatus: event.eventStatus,
+      completionStatus: event.completionStatus,
+      startDate: event.startDate,
+      endDate: event.endDate,
+      priority: event.priority,
+      isAllDay: event.isAllDay || false,
+      completedAt: event.completedAt,
+      location: event.location || null,
+      color: event.color || university.schoolColor || '#6b7280',
+      timezone: event.timezone,
+      isSystemGenerated: event.isSystemGenerated,
+      createdAt: event.createdAt,
+    })),
+
+    // ✅ CRITICAL: Preserve programs data
+    programs: filteredPrograms.map(p => ({
+      id: p.id,
+      programName: p.programName,
+      programSlug: p.programSlug,
+      degreeType: p.degreeType,
+      programLength: p.programLength,
+      specializations: p.specializations,
+      programDescription: p.programDescription,
+    })),
+
+    // ✅ CRITICAL: Preserve admissions with deadlines for Next30Days
+    admissions: allAdmissions.map(adm => ({
+      id: adm.id,
+      minimumGpa: adm.minimumGpa,
+      maximumGpa: adm.maximumGpa,
+      gmatMinScore: adm.gmatMinScore,
+      gmatMaxScore: adm.gmatMaxScore,
+      gmatAverageScore: adm.gmatAverageScore,
+      acceptanceRate: adm.acceptanceRate,
+      deadlines: (adm.deadlines || []).map(dl => ({
+        id: dl.id,
+        deadlineType: dl.deadlineType,
+        deadlineDate: dl.deadlineDate,
+        deadlineTime: dl.deadlineTime,
+        timezone: dl.timezone,
+        title: dl.title,
+        description: dl.description,
+        priority: dl.priority,
+        isExtended: dl.isExtended,
+        originalDeadline: dl.originalDeadline,
+      })),
+      intakes: (adm.intakes || []).map(intake => ({
+        id: intake.id,
+        intakeName: intake.intakeName,
+        intakeType: intake.intakeType,
+        intakeYear: intake.intakeYear,
+        applicationOpenDate: intake.applicationOpenDate,
+        applicationCloseDate: intake.applicationCloseDate,
+      })),
+    })),
+
     stats: {
       tasks: { total: totalTasks, completed: completedTasks, completionRate: taskProgress },
       essays: {
@@ -241,6 +304,8 @@ export function transformUniversity(university, { userStudyLevel, testScores, ti
     whyChooseHighlights: university.whyChooseHighlights ?? [],
     averageDeadlines: university.averageDeadlines,
     websiteUrl: university.websiteUrl,
+    schoolColor: university.schoolColor || '#6b7280', // ✅ Added for event colors
+    primaryProgram: filteredPrograms[0]?.programName || null, // ✅ Added for event context
     isAdded: true,
     userStudyLevel,
   };

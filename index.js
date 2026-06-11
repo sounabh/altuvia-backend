@@ -26,7 +26,8 @@ app.use(
       "http://localhost:3001",
       "https://altuvia.vercel.app",
       "https://altuvia-beta.vercel.app",
-      "https://altuviaadmin.vercel.app"
+      "https://altuviaadmin.vercel.app",
+      "https://applykit-beta.vercel.app"
     ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
